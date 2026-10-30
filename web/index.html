@@ -114,11 +114,19 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke
 .promo button svg{width:100%;height:100%;display:block}
 
 .below{display:flex;flex-direction:column;gap:10px}
-.nav{display:flex;gap:6px;padding-left:38px}
-.nbtn{flex:1;min-height:46px;display:grid;place-items:center;border-radius:5px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink)}
-.nbtn:hover{background:var(--surface-2)}
-.nbtn:active{transform:translateY(1px)}
-.nbtn:disabled{opacity:.35}
+.nav{display:flex;align-items:center;gap:10px;padding-left:38px}
+.turn{flex:1;min-width:0;display:flex;align-items:center;gap:9px;font-size:14px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.turn b{color:var(--ink);font-weight:600}
+.turn .last{color:var(--ink-3);font-family:var(--font-mono);font-size:13px}
+.turn.alert b{color:var(--blund)}
+.navgrp{display:flex;flex:none;border:1px solid var(--line-2);border-radius:8px;overflow:hidden;background:var(--surface)}
+.nbtn{width:46px;height:38px;display:grid;place-items:center;border:0;background:transparent;color:var(--ink-2);transition:background .12s,color .12s}
+.navgrp .nbtn+.nbtn{border-left:1px solid var(--line)}
+.nbtn:hover:not(:disabled){background:var(--surface-2);color:var(--ink)}
+.nbtn:active:not(:disabled){background:var(--accent-soft)}
+.nbtn:disabled{opacity:.3}
+.nbtn .i{width:17px;height:17px}
+.coach[hidden]{display:none}
 .coach{margin-left:38px;min-height:44px;display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--line);border-left:3px solid var(--line-2);background:var(--surface);border-radius:4px;font-size:14px;color:var(--ink-2)}
 .coach b{color:var(--ink);font-weight:600}
 .coach .grow{flex:1;min-width:0}
@@ -147,8 +155,16 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke
 .mv.cur{background:var(--accent);color:var(--accent-ink)}
 .mv.cur .gl{color:inherit}
 .mn{color:var(--ink-3);font-size:12.5px;margin-left:4px}
-.var{color:var(--ink-2);font-size:13px}
-.var .mv{font-size:13px}
+.mainline{display:grid;grid-template-columns:3em 1fr 1fr;align-items:center;row-gap:1px;line-height:1.5}
+.mainline>.mn{margin:0;padding-right:10px;text-align:right;font-variant-numeric:tabular-nums}
+.mainline>.mv{justify-self:start;padding:3px 8px}
+.mv-gap{color:var(--ink-3);padding:3px 8px;font-family:var(--font-mono)}
+.vblock{grid-column:1/-1;margin:3px 0 5px 3em;padding:4px 10px 4px 8px;border-left:2px solid var(--line-2);background:var(--surface-2);border-radius:0 4px 4px 0;line-height:1.85;color:var(--ink-2)}
+.vblock .mv{font-size:13px;font-weight:400;color:var(--ink-2);padding:1px 4px}
+.vblock .mv.cur{color:var(--accent-ink)}
+.vblock .mn{font-size:12px;margin-left:2px}
+.var{color:var(--ink-3);font-size:12.5px}
+.var .mv{font-size:12.5px;color:var(--ink-3)}
 .var-b{display:inline;padding:0 1px;color:var(--ink-3)}
 .result{display:block;margin-top:8px;text-align:center;color:var(--ink-3);font-size:13px}
 .exportrow{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line);flex:none;flex-wrap:wrap}
@@ -247,6 +263,13 @@ textarea.in{padding:10px;min-height:150px;width:100%;resize:vertical;font-family
 .seg input:checked+span{color:var(--accent-ink)}
 .seg label:has(input:checked){background:var(--accent);color:var(--accent-ink)}
 .seg label:has(input:focus-visible){outline:2px solid var(--focus);outline-offset:2px}
+.castle{display:inline-flex;align-items:center;gap:6px}
+.castle .dot-turn{width:11px;height:11px}
+.cchip{position:relative;padding:5px 10px;border:1px solid var(--line-2);border-radius:999px;font:500 12.5px var(--font-mono);color:var(--ink-3);cursor:pointer;user-select:none;transition:background .12s,color .12s,border-color .12s}
+.cchip input{position:absolute;opacity:0;pointer-events:none}
+.cchip:hover{color:var(--ink);border-color:var(--ink-3)}
+.cchip:has(input:checked){background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.cchip:has(input:focus-visible){outline:2px solid var(--focus);outline-offset:2px}
 .chk{display:inline-flex;align-items:center;gap:6px;font-size:14px}
 .chk input{width:17px;height:17px;accent-color:var(--accent)}
 .drop{border:1.5px dashed var(--line-2);border-radius:6px;padding:26px 16px;text-align:center;color:var(--ink-2);display:flex;flex-direction:column;gap:10px;align-items:center;transition:background .15s,border-color .15s}
@@ -494,13 +517,18 @@ textarea.in{padding:10px;min-height:150px;width:100%;resize:vertical;font-family
         </div>
         <div class="below" id="below">
           <div class="nav" role="toolbar" aria-label="Move navigation">
-            <button class="nbtn" id="btnFlip" aria-label="Flip board (F)" title="Flip board (F)"><svg class="i"><use href="#i-flip"/></svg></button>
-            <button class="nbtn" id="btnFirst" aria-label="First position" title="Start (Home / Up)"><svg class="i"><use href="#i-first"/></svg></button>
-            <button class="nbtn" id="btnPrev" aria-label="Previous move" title="Previous (Left)"><svg class="i"><use href="#i-prev"/></svg></button>
-            <button class="nbtn" id="btnNext" aria-label="Next move" title="Next (Right)"><svg class="i"><use href="#i-next"/></svg></button>
-            <button class="nbtn" id="btnLast" aria-label="Last position" title="End (End / Down)"><svg class="i"><use href="#i-last"/></svg></button>
+            <div class="turn" id="turn" aria-live="polite"></div>
+            <div class="navgrp">
+              <button class="nbtn" id="btnFirst" aria-label="First position" title="Start (Home / Up)"><svg class="i"><use href="#i-first"/></svg></button>
+              <button class="nbtn" id="btnPrev" aria-label="Previous move" title="Previous (Left)"><svg class="i"><use href="#i-prev"/></svg></button>
+              <button class="nbtn" id="btnNext" aria-label="Next move" title="Next (Right)"><svg class="i"><use href="#i-next"/></svg></button>
+              <button class="nbtn" id="btnLast" aria-label="Last position" title="End (End / Down)"><svg class="i"><use href="#i-last"/></svg></button>
+            </div>
+            <div class="navgrp">
+              <button class="nbtn" id="btnFlip" aria-label="Flip board (F)" title="Flip board (F)"><svg class="i"><use href="#i-flip"/></svg></button>
+            </div>
           </div>
-          <div class="coach" id="coach" aria-live="polite"></div>
+          <div class="coach" id="coach" aria-live="polite" hidden></div>
         </div>
       </div>
     </section>
@@ -619,7 +647,8 @@ textarea.in{padding:10px;min-height:150px;width:100%;resize:vertical;font-family
               <div class="row"><span class="help" id="edSideLbl">Side to move</span>
                 <div class="seg" role="radiogroup" aria-labelledby="edSideLbl"><label><input type="radio" name="edSide" id="edSideW" value="w" checked><span>White</span></label><label><input type="radio" name="edSide" id="edSideB" value="b"><span>Black</span></label></div></div>
               <div class="row"><span class="help">Castling</span>
-                <label class="chk" for="edK"><input type="checkbox" id="edK">K</label><label class="chk" for="edQ"><input type="checkbox" id="edQ">Q</label><label class="chk" for="edk"><input type="checkbox" id="edk">k</label><label class="chk" for="edq"><input type="checkbox" id="edq">q</label></div>
+                <span class="castle"><span class="dot-turn w"></span><label class="cchip" for="edK" title="White can castle kingside"><input type="checkbox" id="edK">O-O</label><label class="cchip" for="edQ" title="White can castle queenside"><input type="checkbox" id="edQ">O-O-O</label></span>
+                <span class="castle"><span class="dot-turn b"></span><label class="cchip" for="edk" title="Black can castle kingside"><input type="checkbox" id="edk">O-O</label><label class="cchip" for="edq" title="Black can castle queenside"><input type="checkbox" id="edq">O-O-O</label></span></div>
               <label class="chk" for="edBlackBottom"><input type="checkbox" id="edBlackBottom">Show board from Black's side</label>
               <div class="row"><button class="btn sm" id="edFlip">Flip if wrong (rotate 180&#xB0;)</button></div>
             </div>
@@ -970,11 +999,14 @@ function renderCoach() {
     const [k, word] = gl[cur.cls]; cls = 'c-' + k;
     const best = sanOfUci(cur.parent.fen, cur.parent.ev.best);
     html = `<span class="gl g-${k}">${cur.cls}</span><span class="grow"><b>${esc(cur.san)}</b> is ${word}. Best was <b>${esc(best || '?')}</b>.</span><button class="btn sm" id="coachPlay">${icon('i-play').replace('class="i"', 'class="i" style="width:14px;height:14px"')}Play ${esc(best || '')}</button>`;
-  } else {
-    const lastTxt = cur.san ? `${moveNo(cur)}${cur.mover === 'w' ? '.' : '\u2026'} <b>${esc(cur.san)}</b> \u00b7 ` : '';
-    html = `<span class="dot-turn ${cur.turn}"></span><span class="grow">${lastTxt}${esc(st.text)}</span>`;
   }
-  el.className = 'coach ' + cls; el.innerHTML = html;
+  el.className = 'coach ' + cls; el.innerHTML = html; el.hidden = !html;
+  const last = cur.san ? `<span class="last">${moveNo(cur)}${cur.mover === 'w' ? '.' : '\u2026'}\u2009${esc(cur.san)}</span>` : '';
+  const who = cur.turn === 'w' ? 'White' : 'Black';
+  const turn = $('turn');
+  turn.className = 'turn' + (st.over || st.check ? ' alert' : '');
+  turn.innerHTML = st.over ? `<span class="dot-turn ${cur.turn}"></span><b>${esc(st.text)}</b>${last}`
+    : `<span class="dot-turn ${cur.turn}"></span><span><b>${who}</b> to move${st.check ? ', <b>check</b>' : ''}</span>${last}`;
 }
 function renderTitle() {
   const w = headers.White, b = headers.Black;
@@ -990,6 +1022,7 @@ function mvEl(n, force) {
   const lab = white ? `<span class="mn">${num}.</span>` : force ? `<span class="mn">${num}\u2026</span>` : '';
   return `${lab}<button class="mv" data-id="${n.id}" aria-label="${white ? 'White' : 'Black'} ${esc(n.san)}">${esc(n.san)}${glyph(n)}</button> `;
 }
+// inline sequence, used inside variation blocks; nested variations stay inline in parentheses
 function seqHtml(parent, force) {
   let out = '', p = parent, need = force;
   while (p.children.length) {
@@ -999,9 +1032,32 @@ function seqHtml(parent, force) {
   }
   return out;
 }
+// main line as a numbered two-column grid; each variation gets its own indented block under the move it replaces
+function cellHtml(n) { return `<button class="mv" data-id="${n.id}" aria-label="${n.mover === 'w' ? 'White' : 'Black'} ${esc(n.san)}">${esc(n.san)}${glyph(n)}</button>`; }
+const GAP = '<span class="mv-gap">&#x2026;</span>';
+function mainHtml(root) {
+  let out = '', p = root, row = null;
+  const flush = bGap => {
+    if (!row) return;
+    out += `<span class="mn">${row.num}.</span>${row.w ? cellHtml(row.w) : GAP}${row.b ? cellHtml(row.b) : bGap ? GAP : '<span></span>'}`;
+    row = null;
+  };
+  while (p.children.length) {
+    const c = p.children[0], alts = p.children.slice(1);
+    if (c.mover === 'w') { flush(false); row = { num: moveNo(c), w: c, b: null }; }
+    else { if (!row) row = { num: moveNo(c), w: null, b: null }; row.b = c; }
+    if (alts.length) {
+      flush(c.mover === 'w');
+      for (const a of alts) out += `<div class="vblock">${mvEl(a, true)}${seqHtml(a, false)}</div>`;
+    } else if (c.mover === 'b') flush(false);
+    p = c;
+  }
+  flush(false);
+  return out ? `<div class="mainline">${out}</div>` : '';
+}
 function renderMoveList() {
   const el = $('moveList');
-  const body = seqHtml(tree.root, false);
+  const body = mainHtml(tree.root);
   const res = headers.Result && headers.Result !== '*' ? `<span class="result">${esc(headers.Result)}</span>` : '';
   el.innerHTML = body ? body + res : `<div class="empty"><h3>No moves yet</h3>Drag a piece or tap one to play the first move.</div>`;
   markCurrent();
@@ -1694,7 +1750,7 @@ async function downscale(file) {
     bmp = await new Promise((res, rej) => { const img = new Image(); const u = URL.createObjectURL(file); img.onload = () => { URL.revokeObjectURL(u); res(img); }; img.onerror = () => { URL.revokeObjectURL(u); rej(new Error('That file could not be read as an image.')); }; img.src = u; });
   }
   const w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight;
-  const s = Math.min(1, 1600 / Math.max(w, h));
+  const s = Math.min(1, 1024 / Math.max(w, h));
   const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(w * s)); cv.height = Math.max(1, Math.round(h * s));
   const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
   if (bmp.close) bmp.close();
@@ -1729,7 +1785,7 @@ async function recognize(file) {
     thumbUrl = URL.createObjectURL(blob); $('phThumb').src = thumbUrl; $('phThumb2').src = thumbUrl;
     const sample = await samplePromise;
     if (!sample) { showPhoto('phUnavail'); return; }
-    let value = await sample.json(PHOTO_PROMPT, { images: [blob], modelTier: 'complex', signal: ac.signal });
+    let value = await sample.json(PHOTO_PROMPT, { images: [blob], modelTier: 'quick', signal: ac.signal });
     if (typeof value === 'string') { try { value = JSON.parse(value.replace(/^```(?:json)?|```$/gm, '').trim()); } catch (e) { value = null; } }
     if (ac.signal.aborted) return;
     if (!value || typeof value !== 'object') throw { code: 'bad_reply', message: 'Claude replied in a format I could not read. Try again or use a clearer image.' };
