@@ -54,8 +54,21 @@ enum SquareClassifier {
     /// Test-time augmentation: window scales applied around each square's centre; probabilities are averaged.
     static let windowScales: [Double] = [1.0, 0.92, 1.08]
 
+    /// A bitmap-backed copy of `image`. Images straight from ImageIO (webp, jpeg, ...) decode lazily and
+    /// can re-decode the whole picture for every `cropping`; decoding once makes the 192 crops cheap.
+    static func decoded(_ image: CGImage) -> CGImage {
+        guard let ctx = CGContext(
+            data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return image }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return ctx.makeImage() ?? image
+    }
+
     /// Class probabilities for all 64 cells, indexed `[row * 8 + file]` in image orientation (row 0 = top).
-    static func classify(_ image: CGImage, geometry: BoardGeometry, net: PieceNet) -> [[Float]] {
+    static func classify(_ source: CGImage, geometry: BoardGeometry, net: PieceNet) -> [[Float]] {
+        let image = decoded(source)
         var crops: [[UInt8]] = []
         crops.reserveCapacity(64 * windowScales.count)
         for row in 0..<8 {

@@ -3,7 +3,7 @@
 Native SwiftUI version of Chess Lens (macOS 14+, arm64): PGN / FEN / screenshot import, a move tree with
 variations, bundled Stockfish 18 analysis and a full-game review.
 
-## Build
+## Build & run
 
 ```sh
 mac/scripts/build-stockfish.sh      # clones Stockfish sf_18, builds it inside safe-run, copies binary + NNUE nets to mac/vendor/bin
@@ -12,6 +12,11 @@ cd mac && xcodegen generate         # the .xcodeproj is gitignored; regenerate i
     -configuration Debug -derivedDataPath build build CODE_SIGN_IDENTITY=-
 open mac/build/Build/Products/Debug/ChessLens.app
 ```
+
+Or open `mac/ChessLens.xcodeproj` in Xcode after `xcodegen generate` and press Run. Use `-configuration Release` for the
+optimised build (screenshot recognition takes about 0.3 s there; run `swift test -c release` in `Packages/BoardVision` to time it).
+The SwiftPM resource bundle `BoardVision_BoardVision.bundle` lands in `Contents/Resources` and loads under the App Sandbox.
+Vision OCR is pinned to the CPU, because the Neural Engine compile service is unreachable from the sandbox and blocks forever.
 
 The "Embed Stockfish" build phase (`scripts/embed-stockfish.sh`) copies the engine to `Contents/Helpers/stockfish`,
 the nets to `Contents/Resources/Networks`, signs the helper with sandbox + inherit entitlements and bundles

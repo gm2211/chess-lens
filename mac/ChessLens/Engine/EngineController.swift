@@ -69,7 +69,6 @@ final class EngineController {
     }
 
     private func runLive(engine: UCIEngine, position: Position, fen: String, gen: Int) async {
-        NSLog("CL runLive")
         if status == .idle { status = .starting }
         do {
             let stream = try await engine.search(fen: fen, limit: .infinite(depthCap: Self.liveDepthCap), multiPV: Self.multiPV)
@@ -95,7 +94,7 @@ final class EngineController {
             }
             if gen == liveGeneration { searching = false }
         } catch {
-            NSLog("CL live error %@", "\(error)")
+            engineLog.error("live search failed: \(String(describing: error), privacy: .public)")
             if gen == liveGeneration {
                 status = .failed(error.localizedDescription)
                 searching = false

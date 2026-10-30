@@ -1,5 +1,8 @@
 import Foundation
 import ChessCore
+import os
+
+let engineLog = Logger(subsystem: "app.chesslens.ChessLens", category: "engine")
 
 enum SearchLimit: Sendable, Equatable {
     /// `go infinite`, stopped by us once the depth passes `depthCap`.
@@ -91,11 +94,18 @@ actor UCIEngine {
         p.standardOutput = outPipe
         let errPipe = Pipe()
         p.standardError = errPipe
-        errPipe.fileHandleForReading.readabilityHandler = { h in let d = h.availableData; if !d.isEmpty { NSLog("CL stderr: %@", String(decoding: d, as: UTF8.self)) } }
-        p.terminationHandler = { [weak self] proc in NSLog("stockfish exited status=%d reason=%ld", proc.terminationStatus, proc.terminationReason.rawValue); Task { await self?.processDied() } }
-        NSLog("CL launching %@", url.path)
-        do { try p.run() } catch { NSLog("CL launch failed %@", error.localizedDescription); throw EngineError.launchFailed(error.localizedDescription) }
-        NSLog("CL launched pid %d", p.processIdentifier)
+        errPipe.fileHandleForReading.readabilityHandler = { h in
+            let d = h.availableData
+            if !d.isEmpty { engineLog.error("stderr: \(String(decoding: d, as: UTF8.self), privacy: .public)") }
+        }
+        p.terminationHandler = { [weak self] proc in
+            engineLog.info("stockfish exited status=\(proc.terminationStatus)")
+            Task { await self?.processDied() }
+        }
+        do { try p.run() } catch {
+            engineLog.error("launch failed: \(error.localizedDescription, privacy: .public)")
+            throw EngineError.launchFailed(error.localizedDescription)
+        }
         process = p
         input = inPipe.fileHandleForWriting
         let reader = outPipe.fileHandleForReading

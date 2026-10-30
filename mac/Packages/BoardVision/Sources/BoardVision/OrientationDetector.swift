@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import Vision
+import CoreML
 
 /// Decides which side is at the bottom of the screenshot.
 ///
@@ -120,6 +121,11 @@ enum OrientationDetector {
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
         request.minimumTextHeight = 0.05
+        // In the App Sandbox the Neural Engine compile service is unreachable and the request blocks forever.
+        if let cpu = MLComputeDevice.allComputeDevices.first(where: { if case .cpu = $0 { true } else { false } }),
+           let stages = try? request.supportedComputeStageDevices.keys {
+            for stage in stages { try? request.setComputeDevice(cpu, for: stage) }
+        }
         let handler = VNImageRequestHandler(cgImage: scaled, options: [:])
         guard (try? handler.perform([request])) != nil else { return [] }
         var hits: [Hit] = []

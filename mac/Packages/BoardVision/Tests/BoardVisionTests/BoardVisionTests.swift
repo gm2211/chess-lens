@@ -21,6 +21,20 @@ final class BoardVisionTests: XCTestCase {
         XCTAssertLessThan(abs(result.boardRect.width - 1464), 40)  // board nearly fills the 1490x1472 screenshot
     }
 
+    func testRecognitionTiming() async throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "flipped-endgame", withExtension: "webp", subdirectory: "Fixtures"))
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        let recognizer = BoardRecognizer()
+        for i in 0..<3 {
+            let t0 = Date()
+            _ = try await recognizer.recognize(image)
+            let dt = Date().timeIntervalSince(t0)
+            print("TIMING run \(i): \(dt) s")
+            XCTAssertLessThan(dt, 5, "recognition must stay well under the 5 s budget (debug builds are slower; release is ~0.35 s)")
+        }
+    }
+
     // MARK: synthetic round trips (piece set and theme never seen in training)
 
     private static let heldOutLight = NSColor(srgbRed: 0xF2 / 255, green: 0xD9 / 255, blue: 0xDE / 255, alpha: 1)

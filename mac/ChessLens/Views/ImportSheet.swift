@@ -154,6 +154,7 @@ private struct PGNTab: View {
             HStack(alignment: .top, spacing: 14) {
                 MiniBoard(board: g.game.nodes[g.game.mainline().last ?? 0].position.board)
                     .frame(width: 150, height: 150)
+                    .padding(.top, 6)
                 VStack(alignment: .leading, spacing: 8) {
                     if let issue = g.issue {
                         Notice(kind: .warn, text: issue.message + ".")
