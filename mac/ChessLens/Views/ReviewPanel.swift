@@ -69,7 +69,12 @@ private struct ReviewResults: View {
 
             EvalGraph().padding(.horizontal, 14)
 
-            Text("Critical moments").font(.display(19)).padding(.horizontal, 14)
+            HStack {
+                Text("Critical moments").font(.display(19))
+                Spacer()
+                ExplainAllButton(ids: review.criticalMoments())
+            }
+            .padding(.horizontal, 14)
             let moments = review.criticalMoments()
             if moments.isEmpty {
                 Text(review.running ? "Collecting\u{2026}" : "No inaccuracies found. Clean game.")

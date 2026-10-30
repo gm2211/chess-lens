@@ -63,10 +63,13 @@ final class ReviewModel {
     private(set) var hasResults = false
     var selectedDepth: ReviewDepth = .standard
 
+    let commentary = AICommentary()
+
     private var task: Task<Void, Never>?
 
     func reset() {
         task?.cancel(); task = nil
+        commentary.reset()
         entries = [:]; path = []; running = false; done = 0; hasResults = false
     }
 

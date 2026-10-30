@@ -46,6 +46,7 @@ struct MomentDetail: View {
                 LineBlock(title: "Threat / refutation", start: id, pos: node.position, pv: entry.pv)
                 LineBlock(title: "Better was", start: pid, pos: before, pv: prev.pv,
                           note: "\(prev.eval.display) \u{2192} \(entry.eval.display)")
+                CommentaryBlock(id: id)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -87,6 +88,67 @@ private struct LineBlock: View {
                     if pv.count > toks.count { Text("\u{2026}").font(.mono(13)).foregroundStyle(Theme.ink3) }
                 }
             }
+        }
+    }
+}
+
+/// "Explain" button and the resulting AI commentary for one moment.
+private struct CommentaryBlock: View {
+    @Environment(AppModel.self) private var app
+    let id: Int
+
+    var body: some View {
+        let ai = app.review.commentary
+        let state = ai.states[id]
+        VStack(alignment: .leading, spacing: 6) {
+            switch state {
+            case nil:
+                Button { ai.explain(id, game: app.game, review: app.review) } label: {
+                    Label("Explain", systemImage: "sparkles")
+                }
+                .buttonStyle(QuietButtonStyle())
+            case .loading?:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Thinking\u{2026}").font(.system(size: 13)).foregroundStyle(Theme.ink3)
+                }
+            case .text(let t)?:
+                Text(t).font(.system(size: 13.5)).foregroundStyle(Theme.ink)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            case .needsSignIn?:
+                HStack(spacing: 10) {
+                    Text("Sign in to get commentary.").font(.system(size: 13)).foregroundStyle(Theme.ink2)
+                    Button("Sign in with ChatGPT") { ai.signIn(then: id, game: app.game, review: app.review) }
+                        .buttonStyle(QuietButtonStyle())
+                }
+            case .signingIn?:
+                Text("Finish signing in in your browser.").font(.system(size: 13)).foregroundStyle(Theme.ink2)
+            case .failed(let m)?:
+                HStack(spacing: 10) {
+                    Text(m).font(.system(size: 13)).foregroundStyle(Theme.blund).lineLimit(1).truncationMode(.tail)
+                    Button("Retry") { ai.explain(id, game: app.game, review: app.review) }
+                        .buttonStyle(QuietButtonStyle())
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Runs explanations for every notable move in turn; becomes "Stop" while running.
+struct ExplainAllButton: View {
+    @Environment(AppModel.self) private var app
+    let ids: [Int]
+
+    var body: some View {
+        let ai = app.review.commentary
+        if let b = ai.batch {
+            Button { ai.cancelAll() } label: { Label("Stop \(b.done)/\(b.total)", systemImage: "stop.fill") }
+                .buttonStyle(QuietButtonStyle())
+        } else if !ids.isEmpty {
+            Button { ai.explainAll(ids, game: app.game, review: app.review) } label: { Label("Explain all", systemImage: "sparkles") }
+                .buttonStyle(QuietButtonStyle())
+                .disabled(app.review.running)
         }
     }
 }
