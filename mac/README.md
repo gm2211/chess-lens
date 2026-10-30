@@ -7,10 +7,8 @@ variations, bundled Stockfish 18 analysis and a full-game review.
 
 ```sh
 mac/scripts/build-stockfish.sh      # clones Stockfish sf_18, builds it inside safe-run, copies binary + NNUE nets to mac/vendor/bin
-cd mac && xcodegen generate         # the .xcodeproj is gitignored; regenerate it any time
-~/.claude/bin/safe-run.sh -C mac -- xcodebuild -project ChessLens.xcodeproj -scheme ChessLens \
-    -configuration Debug -derivedDataPath build build CODE_SIGN_IDENTITY=-
-open mac/build/Build/Products/Debug/ChessLens.app
+mac/scripts/build-app.sh            # xcodegen + Release build in safe-run; installs mac/build/ChessLens.app when the app isn't running
+open mac/build/ChessLens.app
 ```
 
 Or open `mac/ChessLens.xcodeproj` in Xcode after `xcodegen generate` and press Run. Use `-configuration Release` for the
