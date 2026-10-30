@@ -33,18 +33,14 @@ struct ImportSheet: View {
             .padding(.horizontal, 20).padding(.bottom, 12)
 
             Divider()
-            ScrollView {
-                Group {
-                    switch importer.tab {
-                    case .pgn: PGNTab(openFile: { picker = .pgn }, close: { dismiss() })
-                    case .fen: FENTab(close: { dismiss() })
-                    case .screenshot: ScreenshotTab(chooseImage: { picker = .image }, close: { dismiss() })
-                    }
-                }
-                .padding(20)
+            // Hug the content; scroll only when it would not fit on screen.
+            ViewThatFits(in: .vertical) {
+                tabContent
+                ScrollView { tabContent }
             }
         }
-        .frame(minWidth: 660, idealWidth: 700, minHeight: 600, idealHeight: 800)
+        .frame(width: 700)
+        .fixedSize(horizontal: false, vertical: true)
         .background(Theme.surface)
         .fileImporter(isPresented: Binding(get: { picker != nil }, set: { if !$0 { picker = nil } }),
                       allowedContentTypes: picker == .image ? [.image] : Self.pgnTypes) { result in
@@ -63,6 +59,18 @@ struct ImportSheet: View {
                 app.showToast("That file could not be read.")
             }
         }
+    }
+
+    private var tabContent: some View {
+        Group {
+            switch app.importer.tab {
+            case .pgn: PGNTab(openFile: { picker = .pgn }, close: { dismiss() })
+            case .fen: FENTab(close: { dismiss() })
+            case .screenshot: ScreenshotTab(chooseImage: { picker = .image }, close: { dismiss() })
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
