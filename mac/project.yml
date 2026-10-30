@@ -1,0 +1,67 @@
+name: ChessLens
+options:
+  bundleIdPrefix: app.chesslens
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: NO
+    ENABLE_HARDENED_RUNTIME: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
+    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0"
+packages:
+  ChessCore:
+    path: Packages/ChessCore
+  BoardVision:
+    path: Packages/BoardVision
+targets:
+  ChessLens:
+    type: application
+    platform: macOS
+    sources:
+      - path: ChessLens
+        excludes:
+          - Resources/Stockfish.entitlements
+    dependencies:
+      - package: ChessCore
+      - package: BoardVision
+    info:
+      path: ChessLens/Info.plist
+      properties:
+        CFBundleDisplayName: Chess Lens
+        CFBundleName: Chess Lens
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: "14.0"
+        LSApplicationCategoryType: public.app-category.board-games
+        NSHumanReadableCopyright: "Chess Lens. Includes Stockfish 18 (GPLv3), see Stockfish-Copying.txt."
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Portable Game Notation
+            CFBundleTypeRole: Viewer
+            CFBundleTypeExtensions: [pgn]
+            LSHandlerRank: Alternate
+    entitlements:
+      path: ChessLens/ChessLens.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.chesslens.ChessLens
+        PRODUCT_NAME: ChessLens
+        GENERATE_INFOPLIST_FILE: NO
+        COMBINE_HIDPI_IMAGES: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+    postCompileScripts:
+      - name: Embed Stockfish
+        basedOnDependencyAnalysis: false
+        script: |
+          "${SRCROOT}/scripts/embed-stockfish.sh"

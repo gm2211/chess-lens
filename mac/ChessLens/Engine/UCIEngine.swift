@@ -1,0 +1,256 @@
+import Foundation
+import ChessCore
+
+enum SearchLimit: Sendable, Equatable {
+    /// `go infinite`, stopped by us once the depth passes `depthCap`.
+    case infinite(depthCap: Int)
+    /// `go depth N`.
+    case depth(Int)
+}
+
+enum EngineEvent: Sendable {
+    case info(UCIInfo)
+    /// The search ended. `completed` is false when it was stopped early.
+    case finished(bestMove: String?, completed: Bool)
+}
+
+enum EngineError: Error, LocalizedError {
+    case executableMissing
+    case launchFailed(String)
+    case handshakeFailed
+    case terminated
+
+    var errorDescription: String? {
+        switch self {
+        case .executableMissing: "The Stockfish engine is missing from this build."
+        case .launchFailed(let s): "The engine could not be started (\(s))."
+        case .handshakeFailed: "The engine did not respond."
+        case .terminated: "The engine stopped unexpectedly."
+        }
+    }
+}
+
+/// Wraps a Stockfish child process speaking UCI. One search runs at a time; asking for a new one
+/// stops the old one and waits for its `bestmove` first, so stale `info` lines never leak through.
+actor UCIEngine {
+    private struct Active {
+        let id: Int
+        let continuation: AsyncStream<EngineEvent>.Continuation
+        let limit: SearchLimit
+        var stopping = false
+    }
+
+    private let executableURL: URL?
+    private var process: Process?
+    private var input: FileHandle?
+    private var readTask: Task<Void, Never>?
+    private var startTask: Task<Void, Error>?
+    private var started = false
+    private var dead = false
+
+    private var active: Active?
+    private var nextSearchID = 0
+    private var ticket = 0
+    private var currentMultiPV = 1
+    private var stopWaiters: [CheckedContinuation<Void, Never>] = []
+    private var tokenWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    init(executableURL: URL?) {
+        self.executableURL = executableURL
+    }
+
+    static var defaultExecutableURL: URL? {
+        let url = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/stockfish")
+        return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
+    }
+
+    /// Number of performance cores (falls back to half of the active cores).
+    static var performanceCoreCount: Int {
+        var n: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        if sysctlbyname("hw.perflevel0.physicalcpu", &n, &size, nil, 0) == 0, n > 0 { return Int(n) }
+        return max(1, ProcessInfo.processInfo.activeProcessorCount / 2)
+    }
+
+    // MARK: Lifecycle
+
+    func start() async throws {
+        if started { return }
+        if let t = startTask { return try await t.value }
+        let t = Task { try await self.launchAndHandshake() }
+        startTask = t
+        do { try await t.value } catch { startTask = nil; throw error }
+    }
+
+    private func launchAndHandshake() async throws {
+        guard let url = executableURL else { throw EngineError.executableMissing }
+        let p = Process()
+        p.executableURL = url
+        let inPipe = Pipe(), outPipe = Pipe()
+        p.standardInput = inPipe
+        p.standardOutput = outPipe
+        let errPipe = Pipe()
+        p.standardError = errPipe
+        errPipe.fileHandleForReading.readabilityHandler = { h in let d = h.availableData; if !d.isEmpty { NSLog("CL stderr: %@", String(decoding: d, as: UTF8.self)) } }
+        p.terminationHandler = { [weak self] proc in NSLog("stockfish exited status=%d reason=%ld", proc.terminationStatus, proc.terminationReason.rawValue); Task { await self?.processDied() } }
+        NSLog("CL launching %@", url.path)
+        do { try p.run() } catch { NSLog("CL launch failed %@", error.localizedDescription); throw EngineError.launchFailed(error.localizedDescription) }
+        NSLog("CL launched pid %d", p.processIdentifier)
+        process = p
+        input = inPipe.fileHandleForWriting
+        let reader = outPipe.fileHandleForReading
+        _ = errPipe
+        readTask = Task { [weak self] in
+            do {
+                for try await line in reader.bytes.lines {
+                    await self?.handle(line: line)
+                }
+            } catch {}
+        }
+        send("uci")
+        await waitFor("uciok")
+        if dead { throw EngineError.handshakeFailed }
+        // The nets ship as files in Resources/Networks (the bigger one is the default "EvalFile").
+        if let dir = Bundle.main.resourceURL?.appendingPathComponent("Networks"),
+           let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey]) {
+            let nets = files.filter { $0.pathExtension == "nnue" }
+                .sorted { ((try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+            if let big = nets.first { send("setoption name EvalFile value \(big.path)") }
+            if nets.count > 1, let small = nets.last { send("setoption name EvalFileSmall value \(small.path)") }
+        }
+        send("setoption name Threads value \(Self.performanceCoreCount)")
+        send("setoption name Hash value 256")
+        send("setoption name MultiPV value 1")
+        send("isready")
+        await waitFor("readyok")
+        if dead { throw EngineError.handshakeFailed }
+        started = true
+    }
+
+    func shutdown() {
+        guard let p = process, p.isRunning else { return }
+        send("quit")
+        // Give it a moment, then make sure.
+        Task { [p] in
+            try? await Task.sleep(for: .milliseconds(300))
+            if p.isRunning { p.terminate() }
+        }
+        readTask?.cancel()
+    }
+
+    private func processDied() {
+        dead = true
+        started = false
+        if let a = active { a.continuation.finish() }
+        active = nil
+        for w in stopWaiters { w.resume() }
+        stopWaiters = []
+        for (_, ws) in tokenWaiters { for w in ws { w.resume() } }
+        tokenWaiters = [:]
+    }
+
+    // MARK: IO
+
+    private func send(_ command: String) {
+        guard let input, !dead else { return }
+        try? input.write(contentsOf: Data((command + "\n").utf8))
+    }
+
+    private func waitFor(_ token: String) async {
+        if dead { return }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            tokenWaiters[token, default: []].append(c)
+        }
+    }
+
+    private func handle(line: String) {
+        if let ws = tokenWaiters.removeValue(forKey: line) {
+            for w in ws { w.resume() }
+            return
+        }
+        if line.hasPrefix("info ") {
+            guard var a = active, !a.stopping, let info = UCI.parseInfo(line) else { return }
+            if case .infinite(let cap) = a.limit, info.depth > cap {
+                a.stopping = true
+                active = a
+                send("stop")
+                return
+            }
+            a.continuation.yield(.info(info))
+        } else if line.hasPrefix("bestmove") {
+            let parsed = UCI.parseBestMove(line)
+            if let a = active {
+                let completed: Bool
+                if case .infinite = a.limit { completed = false } else { completed = !a.stopping }
+                a.continuation.yield(.finished(bestMove: parsed?.best, completed: completed))
+                a.continuation.finish()
+            }
+            active = nil
+            let ws = stopWaiters
+            stopWaiters = []
+            for w in ws { w.resume() }
+        }
+    }
+
+    // MARK: Search
+
+    private func stopActive() async {
+        guard var a = active else { return }
+        if !a.stopping {
+            a.stopping = true
+            active = a
+            send("stop")
+        }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            if active == nil { c.resume() } else { stopWaiters.append(c) }
+        }
+    }
+
+    private func cancelIfActive(_ id: Int) {
+        guard var a = active, a.id == id, !a.stopping else { return }
+        a.stopping = true
+        active = a
+        send("stop")
+    }
+
+    /// Starts a search, first stopping (and draining) any previous one.
+    func search(fen: String, limit: SearchLimit, multiPV: Int) async throws -> AsyncStream<EngineEvent> {
+        try await start()
+        if dead { throw EngineError.terminated }
+        ticket += 1
+        let mine = ticket
+        await stopActive()
+        guard mine == ticket else { return AsyncStream { $0.finish() } }   // superseded while waiting
+        if dead { throw EngineError.terminated }
+        if multiPV != currentMultiPV {
+            send("setoption name MultiPV value \(multiPV)")
+            currentMultiPV = multiPV
+        }
+        nextSearchID += 1
+        let id = nextSearchID
+        let (stream, continuation) = AsyncStream.makeStream(of: EngineEvent.self, bufferingPolicy: .bufferingNewest(256))
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.cancelIfActive(id) }
+        }
+        active = Active(id: id, continuation: continuation, limit: limit)
+        send("position fen \(fen)")
+        switch limit {
+        case .infinite: send("go infinite")
+        case .depth(let d): send("go depth \(d)")
+        }
+        return stream
+    }
+
+    /// Stops whatever is running.
+    func stop() async {
+        ticket += 1
+        await stopActive()
+    }
+
+    func newGame() async {
+        await stop()
+        send("ucinewgame")
+        send("isready")
+        await waitFor("readyok")
+    }
+}
