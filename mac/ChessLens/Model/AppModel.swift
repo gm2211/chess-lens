@@ -75,8 +75,8 @@ final class AppModel {
     var title: String { PGN.title(of: game) }
     var subtitle: String {
         var parts: [String] = []
-        if let e = game.header("Event"), e != "?", e != title { parts.append(e) }
-        if let s = game.header("Site"), s != "?" { parts.append(s) }
+        if let e = PGN.meaningful(game.header("Event")), e != title { parts.append(e) }
+        if let s = PGN.meaningful(game.header("Site")) { parts.append(s) }
         if let d = game.header("Date"), let y = d.split(separator: ".").first, y.allSatisfy(\.isNumber) { parts.append(String(y)) }
         if parts.isEmpty, game.nodes.count == 1 { return "Position" }
         return parts.joined(separator: " · ")

@@ -21,10 +21,16 @@ public struct ParsedGame: Sendable {
 }
 
 public enum PGN {
+    /// A header value worth showing: not empty, not a "?" placeholder, not a one-letter stub.
+    public static func meaningful(_ v: String?) -> String? {
+        guard let t = v?.trimmingCharacters(in: .whitespaces), t.count > 1, !t.allSatisfy({ $0 == "?" || $0 == "-" || $0 == "." }) else { return nil }
+        return t
+    }
+
     public static func title(of g: Game) -> String {
-        let w = g.header("White") ?? "?", b = g.header("Black") ?? "?"
-        if w == "?" && b == "?" { return g.header("Event").flatMap { $0 == "?" ? nil : $0 } ?? "Untitled game" }
-        return "\(w) – \(b)"
+        let w = meaningful(g.header("White")), b = meaningful(g.header("Black"))
+        if w == nil && b == nil { return meaningful(g.header("Event")) ?? "Untitled game" }
+        return "\(w ?? "?") – \(b ?? "?")"
     }
 
     // MARK: Parsing
@@ -59,12 +65,12 @@ public enum PGN {
             case "[":
                 var j = i + 1
                 var key = ""
-                while j < s.count, s[j] != " ", s[j] != "\"", s[j] != "]" { key.unicodeScalars.append(s[j]); j += 1 }
+                while j < s.count, s[j] != " ", s[j] != "\"", s[j] != "\u{201C}", s[j] != "]" { key.unicodeScalars.append(s[j]); j += 1 }
                 while j < s.count, s[j] == " " || s[j] == "\t" { j += 1 }
                 var val = ""
-                if j < s.count, s[j] == "\"" {
+                if j < s.count, s[j] == "\"" || s[j] == "\u{201C}" {
                     j += 1
-                    while j < s.count, s[j] != "\"" {
+                    while j < s.count, s[j] != "\"", s[j] != "\u{201D}" {
                         if s[j] == "\\", j + 1 < s.count { j += 1 }
                         val.unicodeScalars.append(s[j]); j += 1
                     }

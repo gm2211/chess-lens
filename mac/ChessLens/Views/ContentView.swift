@@ -8,13 +8,19 @@ struct ContentView: View {
 
     var body: some View {
         @Bindable var app = app
-        BoardColumn()
-            .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.bg)
-            .inspector(isPresented: $app.showInspector) {
+        HStack(spacing: 0) {
+            BoardColumn()
+                .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.bg)
+            if app.showInspector {
+                Divider()
                 InspectorView()
-                    .inspectorColumnWidth(min: 320, ideal: 380, max: 560)
+                    .frame(width: 380)
+                    .frame(maxHeight: .infinity)
+                    .transition(.move(edge: .trailing))
             }
+        }
+        .animation(.easeOut(duration: 0.2), value: app.showInspector)
             .navigationTitle(app.title)
             .navigationSubtitle(app.subtitle)
             .toolbar { toolbar }
@@ -271,7 +277,7 @@ private struct MovesPanel: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(app.title).font(.display(21)).foregroundStyle(Theme.ink).lineLimit(2)
-                let sub = [app.game.header("Date").flatMap { $0.contains("?") ? nil : $0 }, app.game.header("Event").flatMap { $0 == "?" ? nil : $0 }, app.game.result == "*" ? nil : app.game.result]
+                let sub = [app.game.header("Date").flatMap { $0.contains("?") ? nil : $0 }, PGN.meaningful(app.game.header("Event")).flatMap { $0 == app.title ? nil : $0 }, app.game.result == "*" ? nil : app.game.result]
                     .compactMap { $0 }.joined(separator: " \u{00B7} ")
                 if !sub.isEmpty { Text(sub).font(.system(size: 13)).foregroundStyle(Theme.ink3) }
             }
