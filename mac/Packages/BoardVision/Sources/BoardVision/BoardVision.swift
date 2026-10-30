@@ -36,6 +36,6 @@ public final class BoardRecognizer: Sendable {
     public init() {}
 
     public func recognize(_ image: CGImage) async throws -> RecognizedBoard {
-        throw BoardRecognitionError.modelUnavailable // TODO: implemented by the BoardVision work
+        try await Task.detached(priority: .userInitiated) { try RecognitionPipeline.run(image) }.value
     }
 }
