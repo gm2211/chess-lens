@@ -44,7 +44,7 @@ struct ImportSheet: View {
                 .padding(20)
             }
         }
-        .frame(width: 660, height: 600)
+        .frame(minWidth: 660, idealWidth: 700, minHeight: 600, idealHeight: 800)
         .background(Theme.surface)
         .fileImporter(isPresented: Binding(get: { picker != nil }, set: { if !$0 { picker = nil } }),
                       allowedContentTypes: picker == .image ? [.image] : Self.pgnTypes) { result in
