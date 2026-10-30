@@ -58,6 +58,7 @@ targets:
         PRODUCT_NAME: ChessLens
         GENERATE_INFOPLIST_FILE: NO
         COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
     postCompileScripts:
