@@ -3,6 +3,7 @@ import ChessCore
 
 struct EnginePanel: View {
     @Environment(AppModel.self) private var app
+    @State private var showSettings = false
 
     var body: some View {
         @Bindable var app = app
@@ -15,19 +16,52 @@ struct EnginePanel: View {
                 Spacer()
                 Text(statText).font(.mono(12)).foregroundStyle(Theme.ink3)
             }
-            .padding(.horizontal, 14).padding(.vertical, 12)
+            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
+            presetRow
             Divider()
 
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             Divider()
-            Text("Stockfish 18 (GPLv3), running on your Mac. \(EngineController.multiPV) lines, up to depth \(EngineController.liveDepthCap).")
+            Text("Stockfish 18 (GPLv3), running on your Mac. \(footerText)")
                 .font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14).padding(.vertical, 8)
         }
         .background(Theme.surface)
+    }
+
+    private var settings: EngineSettings { app.engine.settings }
+
+    private var footerText: String {
+        let c = settings.config
+        let lines = "\(c.lines) line\(c.lines == 1 ? "" : "s")"
+        return c.depthCap == 0 ? "\(lines), no depth limit." : "\(lines), up to depth \(c.depthCap)."
+    }
+
+    private var presetRow: some View {
+        let custom = settings.config.preset == .custom
+        return HStack(spacing: 8) {
+            Picker("Strength", selection: Binding<EnginePreset?>(
+                get: { custom ? nil : settings.config.preset },
+                set: { if let p = $0 { settings.choose(p) } }
+            )) {
+                ForEach(EnginePreset.easy) { Text($0.title).tag(Optional($0)) }
+            }
+            .pickerStyle(.segmented).labelsHidden()
+            Button { showSettings.toggle() } label: {
+                Image(systemName: "gearshape").font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(custom ? Theme.accent : Theme.ink2)
+                    .frame(width: 26, height: 22)
+            }
+            .buttonStyle(.borderless)
+            .help(custom ? "Custom engine settings" : "Engine settings")
+            .popover(isPresented: $showSettings, arrowEdge: .bottom) {
+                EngineSettingsForm(settings: settings).padding(16).frame(width: 330)
+            }
+        }
+        .padding(.horizontal, 14).padding(.bottom, 10)
     }
 
     private var statText: String {
@@ -58,7 +92,7 @@ struct EnginePanel: View {
             }.padding(24)
         } else if app.engine.lines.isEmpty || app.engine.linesFEN != app.position.fen {
             VStack(spacing: 0) {
-                ForEach(0..<3, id: \.self) { _ in
+                ForEach(0..<settings.config.lines, id: \.self) { _ in
                     HStack(spacing: 12) {
                         RoundedRectangle(cornerRadius: 3).fill(Theme.line).frame(width: 58, height: 24)
                         RoundedRectangle(cornerRadius: 3).fill(Theme.line).frame(height: 12)

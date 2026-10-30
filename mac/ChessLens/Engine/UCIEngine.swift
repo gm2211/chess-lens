@@ -55,11 +55,23 @@ actor UCIEngine {
     private var nextSearchID = 0
     private var ticket = 0
     private var currentMultiPV = 1
+    private var threads: Int
+    private var hash: Int
+    private var appliedThreads = 0
+    private var appliedHash = 0
     private var stopWaiters: [CheckedContinuation<Void, Never>] = []
     private var tokenWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
-    init(executableURL: URL?) {
+    init(executableURL: URL?, threads: Int = UCIEngine.performanceCoreCount, hash: Int = 256) {
         self.executableURL = executableURL
+        self.threads = threads
+        self.hash = hash
+    }
+
+    /// Stored now, sent before the next search (never while one is running).
+    func setOptions(threads: Int, hash: Int) {
+        self.threads = threads
+        self.hash = hash
     }
 
     static var defaultExecutableURL: URL? {
@@ -87,6 +99,7 @@ actor UCIEngine {
 
     private func launchAndHandshake() async throws {
         guard let url = executableURL else { throw EngineError.executableMissing }
+        appliedThreads = 0; appliedHash = 0; currentMultiPV = 1
         let p = Process()
         p.executableURL = url
         let inPipe = Pipe(), outPipe = Pipe()
@@ -128,8 +141,7 @@ actor UCIEngine {
             if let big = nets.first { send("setoption name EvalFile value \(big.path)") }
             if nets.count > 1, let small = nets.last { send("setoption name EvalFileSmall value \(small.path)") }
         }
-        send("setoption name Threads value \(Self.performanceCoreCount)")
-        send("setoption name Hash value 256")
+        sendPendingOptions()
         send("setoption name MultiPV value 1")
         send("isready")
         await waitFor("readyok")
@@ -202,6 +214,11 @@ actor UCIEngine {
         }
     }
 
+    private func sendPendingOptions() {
+        if threads != appliedThreads { send("setoption name Threads value \(threads)"); appliedThreads = threads }
+        if hash != appliedHash { send("setoption name Hash value \(hash)"); appliedHash = hash }
+    }
+
     // MARK: Search
 
     private func stopActive() async {
@@ -232,6 +249,13 @@ actor UCIEngine {
         await stopActive()
         guard mine == ticket else { return AsyncStream { $0.finish() } }   // superseded while waiting
         if dead { throw EngineError.terminated }
+        if threads != appliedThreads || hash != appliedHash {
+            sendPendingOptions()
+            send("isready")
+            await waitFor("readyok")
+            guard mine == ticket else { return AsyncStream { $0.finish() } }
+            if dead { throw EngineError.terminated }
+        }
         if multiPV != currentMultiPV {
             send("setoption name MultiPV value \(multiPV)")
             currentMultiPV = multiPV

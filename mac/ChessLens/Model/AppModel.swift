@@ -61,6 +61,7 @@ final class AppModel {
             game = SampleGames.operaGame
         }
         layoutCache = [:]
+        engine.onSettingsApplied = { [weak self] in self?.refreshEngine() }
         refreshEngine()
     }
 

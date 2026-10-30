@@ -24,6 +24,11 @@ struct ChessLensApp: App {
         .defaultSize(width: 1160, height: 780)
         .windowResizability(.contentMinSize)
         .commands { AppCommands(model: model) }
+
+        Settings {
+            EngineSettingsForm(settings: model.engine.settings)
+                .padding(20).frame(width: 380)
+        }
     }
 }
 

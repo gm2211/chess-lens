@@ -23,9 +23,6 @@ struct FixedResult {
 final class EngineController {
     enum Status: Equatable { case idle, starting, running, failed(String) }
 
-    static let liveDepthCap = 28
-    static let multiPV = 3
-
     private(set) var status: Status = .idle
     private(set) var lines: [EngineLine] = []
     private(set) var linesFEN: String?
@@ -35,13 +32,28 @@ final class EngineController {
 
     var isAvailable: Bool { engine != nil }
 
+    let settings = EngineSettings()
+    /// Called after a settings change so the owner can restart the current analysis.
+    @ObservationIgnored var onSettingsApplied: (() -> Void)?
+
     private let engine: UCIEngine?
     private var liveTask: Task<Void, Never>?
     private var liveGeneration = 0
 
     init(executableURL: URL? = UCIEngine.defaultExecutableURL) {
-        engine = executableURL.map { UCIEngine(executableURL: $0) }
+        let c = settings.config
+        engine = executableURL.map { UCIEngine(executableURL: $0, threads: c.threads, hash: c.hash) }
         if engine == nil { status = .failed("The Stockfish engine is missing from this build.") }
+        settings.onChange = { [weak self] old, new in self?.settingsChanged(old, new) }
+    }
+
+    private func settingsChanged(_ old: EngineConfig, _ new: EngineConfig) {
+        if new.lines < old.lines { lines.removeAll { $0.rank > new.lines } }
+        guard let engine else { return }
+        Task { [weak self] in
+            await engine.setOptions(threads: new.threads, hash: new.hash)
+            self?.onSettingsApplied?()
+        }
     }
 
     // MARK: Live analysis
@@ -70,8 +82,9 @@ final class EngineController {
 
     private func runLive(engine: UCIEngine, position: Position, fen: String, gen: Int) async {
         if status == .idle { status = .starting }
+        let cfg = settings.config
         do {
-            let stream = try await engine.search(fen: fen, limit: .infinite(depthCap: Self.liveDepthCap), multiPV: Self.multiPV)
+            let stream = try await engine.search(fen: fen, limit: .infinite(depthCap: cfg.depthCap == 0 ? .max : cfg.depthCap), multiPV: cfg.lines)
             if gen != liveGeneration { return }
             status = .running
             linesFEN = fen
