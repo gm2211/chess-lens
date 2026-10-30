@@ -34,6 +34,7 @@ struct ReviewEntry: Equatable {
     var eval: Eval
     var best: String?          // engine's best move from this position (UCI)
     var depth: Int
+    var pv: [String] = []      // engine's principal variation from this position (UCI)
     var loss: Double?          // win-probability points lost by the move that led here
     var cls: MoveClass?
 }
@@ -90,7 +91,7 @@ final class ReviewModel {
                     let eval: Eval = pos.isCheck ? .checkmate(winner: pos.turn.opposite) : .cp(0)
                     entry = ReviewEntry(eval: eval, best: nil, depth: 0)
                 } else if let r = await engine.analyzeFixed(pos, depth: depthValue) {
-                    entry = ReviewEntry(eval: r.eval, best: r.bestMove, depth: r.depth)
+                    entry = ReviewEntry(eval: r.eval, best: r.bestMove, depth: r.depth, pv: r.pv)
                 } else {
                     finished = false
                     break

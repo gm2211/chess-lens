@@ -5,6 +5,8 @@ struct BoardArrow: Equatable {
     var from: Square
     var to: Square
     var rank: Int
+    var kind: Kind = .engine
+    enum Kind { case engine, best, threat }
 }
 
 /// Maps squares to points for a board drawn with White (or Black) at the bottom.
@@ -48,12 +50,29 @@ struct BoardView: View {
         return app.position.legalMoves(from: s)
     }
 
+    /// On a notable reviewed move: the opponent's best reply (threat) and the move that was better.
+    private var reviewArrows: [BoardArrow] {
+        let review = app.review
+        guard review.hasResults, let e = review.entries[app.currentID], e.cls != nil,
+              let pid = app.node.parent else { return [] }
+        var out: [BoardArrow] = []
+        if let m = e.pv.first.flatMap({ Move(uci: $0) }) { out.append(BoardArrow(from: m.from, to: m.to, rank: 2, kind: .threat)) }
+        if let m = review.entries[pid]?.best.flatMap({ Move(uci: $0) }) { out.append(BoardArrow(from: m.from, to: m.to, rank: 2, kind: .best)) }
+        return out
+    }
+
     private var arrows: [BoardArrow] {
-        guard app.engineEnabled, app.engine.linesFEN == app.position.fen, !app.review.running else { return [] }
-        return app.engine.lines.prefix(3).compactMap { l in
-            guard let u = l.firstMove, let m = Move(uci: u) else { return nil }
-            return BoardArrow(from: m.from, to: m.to, rank: l.rank)
+        let extra = reviewArrows
+        var out = extra
+        if app.engineEnabled, app.engine.linesFEN == app.position.fen, !app.review.running {
+            out += app.engine.lines.prefix(3).compactMap { l -> BoardArrow? in
+                guard let u = l.firstMove, let m = Move(uci: u) else { return nil }
+                // The live line duplicates a review arrow: keep the review one.
+                if extra.contains(where: { $0.from == m.from && $0.to == m.to }) { return nil }
+                return BoardArrow(from: m.from, to: m.to, rank: l.rank)
+            }
         }
+        return out
     }
 
     var body: some View {
@@ -178,11 +197,12 @@ struct BoardView: View {
             tri.addLine(to: CGPoint(x: base.x - uy * head * 0.55, y: base.y + ux * head * 0.55))
             tri.addLine(to: CGPoint(x: base.x + uy * head * 0.55, y: base.y - ux * head * 0.55))
             tri.closeSubpath()
-            let opacity = a.rank == 1 ? 0.85 : (a.rank == 2 ? 0.55 : 0.38)
+            let opacity = a.kind == .engine ? (a.rank == 1 ? 0.85 : (a.rank == 2 ? 0.55 : 0.38)) : 0.6
+            let color = a.kind == .threat ? Theme.blund : Theme.arrow
             var layer = ctx
             layer.opacity = opacity
-            layer.stroke(shaft, with: .color(Theme.arrow), style: StrokeStyle(lineWidth: width, lineCap: .round))
-            layer.fill(tri, with: .color(Theme.arrow))
+            layer.stroke(shaft, with: .color(color), style: StrokeStyle(lineWidth: width, lineCap: .round))
+            layer.fill(tri, with: .color(color))
         }
     }
 

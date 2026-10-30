@@ -17,6 +17,7 @@ struct FixedResult {
     var eval: Eval
     var bestMove: String?
     var depth: Int
+    var pv: [String] = []       // full principal variation (UCI)
 }
 
 @Observable @MainActor
@@ -145,11 +146,12 @@ final class EngineController {
                 switch event {
                 case .info(let info):
                     if info.hasScore, !info.isBound, let e = info.eval(whiteToMove: position.turn == .white) {
-                        last = FixedResult(eval: e, bestMove: info.pv.first ?? last?.bestMove, depth: info.depth)
+                        last = FixedResult(eval: e, bestMove: info.pv.first ?? last?.bestMove, depth: info.depth,
+                                           pv: info.pv.isEmpty ? (last?.pv ?? []) : info.pv)
                     }
                 case .finished(let best, let completed):
                     guard completed else { return nil }
-                    if var l = last { if let best { l.bestMove = best }; return l }
+                    if var l = last { if let best { l.bestMove = best; if l.pv.first != best { l.pv = [best] } }; return l }
                     return nil
                 }
             }

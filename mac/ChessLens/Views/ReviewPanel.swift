@@ -118,6 +118,7 @@ private struct SummaryCard: View {
 private struct MomentRow: View {
     @Environment(AppModel.self) private var app
     let id: Int
+    @State private var expanded = false
 
     var body: some View {
         if app.game.nodes.indices.contains(id) { content } else { EmptyView() }
@@ -128,18 +129,26 @@ private struct MomentRow: View {
         let entry = app.review.entries[id]
         let parent = node.parent.map { app.game.nodes[$0] }
         let best = parent.flatMap { p in app.review.entries[p.id]?.best.flatMap { b in p.position.move(fromUCI: b).map { p.position.san($0) } } }
-        Button { app.goto(id) } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("\(parent?.position.fullmove ?? 0)\(parent?.position.turn == .white ? "." : "\u{2026}") \(node.san)").font(.mono(14, weight: .semibold))
-                if let c = entry?.cls { Text(c.rawValue).font(.mono(13, weight: .bold)).foregroundStyle(Theme.color(for: c)) }
-                Spacer()
-                Text("\(best.map { "best \($0)" } ?? "") \u{00B7} \u{2212}\(Int((entry?.loss ?? 0).rounded()))%")
-                    .font(.mono(12.5)).foregroundStyle(Theme.ink3)
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                expanded.toggle()
+                app.goto(id)
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.ink3)
+                        .rotationEffect(.degrees(expanded ? 90 : 0)).frame(width: 8)
+                    Text("\(parent?.position.fullmove ?? 0)\(parent?.position.turn == .white ? "." : "\u{2026}") \(node.san)").font(.mono(14, weight: .semibold))
+                    if let c = entry?.cls { Text(c.rawValue).font(.mono(13, weight: .bold)).foregroundStyle(Theme.color(for: c)) }
+                    Spacer()
+                    Text("\(best.map { "best \($0)" } ?? "") \u{00B7} \u{2212}\(Int((entry?.loss ?? 0).rounded()))%")
+                        .font(.mono(12.5)).foregroundStyle(Theme.ink3)
+                }
+                .padding(.vertical, 9).padding(.horizontal, 2)
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 9).padding(.horizontal, 2)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            if expanded { MomentDetail(id: id).padding(.leading, 18).padding(.bottom, 10) }
         }
-        .buttonStyle(.plain)
     }
 }
 

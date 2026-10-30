@@ -157,6 +157,13 @@ final class AppModel {
         }
     }
 
+    /// Plays the first `count` moves of `pv` as a variation starting at node `id`.
+    func playLine(_ pv: [String], count: Int, from id: Int) {
+        guard game.nodes.indices.contains(id) else { return }
+        currentID = id
+        playLine(pv, count: count)
+    }
+
     func playEngineMove(_ uci: String) {
         if let m = position.move(fromUCI: uci) { play(m) }
     }
