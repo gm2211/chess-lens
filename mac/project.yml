@@ -29,6 +29,7 @@ targets:
       - path: ChessLens
         excludes:
           - Resources/Stockfish.entitlements
+          - Resources/Sidecar.entitlements
     dependencies:
       - package: ChessCore
       - package: BoardVision
@@ -52,6 +53,8 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-only: true
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.chesslens.ChessLens
@@ -66,3 +69,7 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           "${SRCROOT}/scripts/embed-stockfish.sh"
+      - name: Embed LLM sidecar
+        basedOnDependencyAnalysis: false
+        script: |
+          "${SRCROOT}/scripts/embed-sidecar.sh"

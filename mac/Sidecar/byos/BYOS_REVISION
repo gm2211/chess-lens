@@ -1,0 +1,6 @@
+commit=26c104525ddb42f1b0ac69d63b80812ec7634012
+sourcePath=packages
+mode=packages
+packages=chatgpt-local
+namePrefix=byos-
+engine=omit

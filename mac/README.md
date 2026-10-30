@@ -21,6 +21,28 @@ the nets to `Contents/Resources/Networks`, signs the helper with sandbox + inher
 Stockfish's GPLv3 text as `Stockfish-Copying.txt`. The build fails with a pointer to the script if `vendor/bin/stockfish` is missing.
 (The nets are shipped as files because the nets embedded in the binary did not load in this build.)
 
+## AI commentary sidecar
+
+`Sidecar/` is a small Node program that talks to ChatGPT through the vendored `@byos/chatgpt-local` (official Sign in
+with ChatGPT, tokens in the macOS Keychain, direct HTTPS). The app launches it as a child process and speaks
+newline-delimited JSON on stdin/stdout (`status`, `signIn`, `signOut`, `complete`; protocol in `Sidecar/src/server.mjs`).
+Tokens never leave the sidecar; Swift sees the account label, model list and generated text.
+
+```sh
+mac/scripts/build-sidecar.sh          # fetches Node 24.22.1 (sha256 + Node.js Foundation signature checked), npm ci, tests, bundles to mac/vendor/sidecar
+mac/scripts/check-sidecar-sandbox.sh  # optional: drives the real LLMSidecar.swift under the App Sandbox (no UI)
+```
+
+The "Embed LLM sidecar" build phase (`scripts/embed-sidecar.sh`) copies `Helpers/sidecar-node` (signed with
+`Resources/Sidecar.entitlements`: sandbox + inherit + JIT + no library validation), `Helpers/sidecar-keyring.node` and
+`Resources/sidecar.mjs`. The app gains `network.client` (OpenAI) and `network.server` (the loopback OAuth callback;
+without it the listener cannot bind). Swift API: `ChessLens/LLM/LLMSidecar.swift` (`LLMSidecar.shared`: `status()`,
+`signIn(openURL:)`, `signOut()`, `complete(model:system:prompt:maxTokens:) -> AsyncThrowingStream<String, Error>`) and
+`ChessLens/LLM/AIAccountView.swift` (drop-in account/model view; chosen model in `UserDefaults` key `ai.model`).
+Update the vendored kit with `scripts/vendor.mjs` from a BYOS checkout (`--packages chatgpt-local --out mac/Sidecar/byos`);
+never edit `Sidecar/byos`. Limits: the kit returns the finished text, so `complete` replays it as chunks (not live tokens),
+and `maxTokens` is only a prompt hint.
+
 ## Layout
 
 - `Packages/ChessCore` rules, FEN, SAN, PGN (variations, comments, NAGs), UCI parsing. `swift test` in that folder
