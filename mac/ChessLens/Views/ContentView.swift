@@ -209,12 +209,7 @@ private struct CoachBar: View {
         .animation(.easeOut(duration: 0.15), value: app.currentID)
     }
 
-    private var cls: MoveClass? { app.review.entries[app.currentID]?.cls }
-
-    private var borderColor: Color {
-        if let c = cls { return Theme.color(for: c) }
-        return Theme.line2
-    }
+    private var borderColor: Color { Theme.line2 }
 
     @ViewBuilder
     private var content: some View {
@@ -225,17 +220,6 @@ private struct CoachBar: View {
             Text("Stalemate \u{2014} the game is drawn").font(.system(size: 14)).foregroundStyle(Theme.ink2)
         } else if pos.isInsufficientMaterial {
             Text("Draw by insufficient material").font(.system(size: 14)).foregroundStyle(Theme.ink2)
-        } else if let c = cls, let parentID = app.node.parent {
-            let parent = app.game.nodes[parentID]
-            let best = app.review.entries[parentID]?.best.flatMap { b in parent.position.move(fromUCI: b).map { parent.position.san($0) } }
-            Text(c.rawValue).font(.mono(13, weight: .bold)).foregroundStyle(Theme.color(for: c))
-            Text("**\(app.node.san)** is \(c.word).\(best.map { " Best was **\($0)**." } ?? "")")
-                .font(.system(size: 14)).foregroundStyle(Theme.ink2)
-            if best != nil {
-                Button { app.playBest(fromParentOf: app.currentID) } label: {
-                    Label("Play it", systemImage: "play.fill").font(.system(size: 12.5, weight: .semibold))
-                }.buttonStyle(QuietButtonStyle())
-            }
         } else {
             Circle().fill(pos.turn == .white ? Color(red: 0.96, green: 0.96, blue: 0.94) : Color(red: 0.106, green: 0.133, blue: 0.125))
                 .overlay(Circle().stroke(Theme.ink2, lineWidth: 1.5)).frame(width: 12, height: 12)
