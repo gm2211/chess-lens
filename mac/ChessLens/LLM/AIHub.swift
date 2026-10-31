@@ -1,6 +1,9 @@
 import SwiftUI
 import AppKit
 import Observation
+import os
+
+private let aiLog = Logger(subsystem: "app.chesslens", category: "ai")
 
 enum AIAuthKind: Equatable { case oauth, apiKey, both, onDevice }
 
@@ -120,6 +123,8 @@ final class AIHub {
     private(set) var awaitingCode: Set<AIProviderID> = []
     /// Code to enter on the provider's page during a device-code sign-in (Grok).
     private(set) var deviceCode: [AIProviderID: String] = [:]
+    /// The page the current sign-in opened, shown as a link in case the browser didn't come up.
+    private(set) var signInURL: [AIProviderID: URL] = [:]
 
     var current: AIProviderState { states[selected] ?? AIProviderState() }
     var isReady: Bool { current.ready }
@@ -164,7 +169,7 @@ final class AIHub {
     private func apply(_ s: LLMStatus, to id: AIProviderID) {
         states[id] = AIProviderState(ready: s.ready, account: s.account, models: s.models, problem: s.error.flatMap(Self.describe))
         if s.awaitingCode { awaitingCode.insert(id) } else { awaitingCode.remove(id) }
-        if s.ready { deviceCode[id] = nil }
+        if s.ready { deviceCode[id] = nil; signInURL[id] = nil }
         if let m = chosen[id], s.ready, !s.models.isEmpty, !s.models.contains(where: { $0.id == m }) {
             chosen[id] = nil; defaults.removeObject(forKey: Self.modelKey(id))
         }
@@ -186,14 +191,23 @@ final class AIHub {
     func signIn(_ id: AIProviderID, apiKey: String? = nil, paste: Bool = false) async throws {
         guard id.usesSidecar else { throw LLMError.server(code: "unsupported", message: "Apple Intelligence needs no sign-in.") }
         signingIn.insert(id)
+        signInURL[id] = nil
         defer { signingIn.remove(id); deviceCode[id] = nil }
         let status = try await sidecar.signIn(provider: id.rawValue, apiKey: apiKey, paste: paste) { [weak self] url, code in
             Task { @MainActor in
                 if let code { self?.setDeviceCode(code, for: id) }
-                _ = NSWorkspace.shared.open(url)
+                self?.signInURL[id] = url
+                Self.openInBrowser(url)
             }
         }
+        if !status.awaitingCode { signInURL[id] = nil }
         apply(status, to: id)
+    }
+
+    static func openInBrowser(_ url: URL) {
+        NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            if let error { aiLog.error("Couldn't open \(url.host() ?? "", privacy: .public) in the browser: \(error.localizedDescription, privacy: .public)") }
+        }
     }
 
     private func setDeviceCode(_ code: String, for id: AIProviderID) {
@@ -208,6 +222,7 @@ final class AIHub {
     func signOut(_ id: AIProviderID) async {
         if id.usesSidecar { try? await sidecar.signOut(provider: id.rawValue) }
         awaitingCode.remove(id)
+        signInURL[id] = nil
         await load(id)
     }
 

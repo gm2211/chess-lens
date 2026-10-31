@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// AI provider picker and setup: a provider list with status dots, then the selected provider's sign-in
 /// (OAuth button plus a paste-code fallback, or a key field with a setup link, or Apple's availability),
@@ -106,12 +107,14 @@ struct AIProvidersView: View {
             } else {
                 Text("Finish signing in in your browser.").font(.system(size: 12)).foregroundStyle(Theme.ink2)
             }
+            browserLink
             HStack {
                 Button("Cancel") { task?.cancel() }.buttonStyle(QuietButtonStyle())
                 if id == .claude { Button("Use a code instead") { startPaste() }.buttonStyle(QuietButtonStyle()) }
             }
         } else if hub.awaitingCode.contains(id) || pasting {
             Text("Sign in in your browser, then paste the code it shows.").font(.system(size: 12)).foregroundStyle(Theme.ink2)
+            browserLink
             TextField("Code", text: $code).textFieldStyle(.roundedBorder).font(.mono(12))
             HStack {
                 Button("Submit") { run { try await hub.submitCode(id, code: code.trimmingCharacters(in: .whitespacesAndNewlines)); reset() } }
@@ -126,6 +129,20 @@ struct AIProvidersView: View {
                     .font(.system(size: 11.5)).foregroundStyle(Theme.ink2).disabled(busy)
             }
             Text(id.setupHint).font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
+        }
+    }
+
+    /// Fallback for when the browser didn't come up: reopen the sign-in page, or copy it to paste elsewhere.
+    @ViewBuilder private var browserLink: some View {
+        if let url = hub.signInURL[id] {
+            HStack(spacing: 10) {
+                Button("Open browser again") { AIHub.openInBrowser(url) }.buttonStyle(.link)
+                Button("Copy link") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                }.buttonStyle(.link)
+            }
+            .font(.system(size: 11.5))
         }
     }
 
