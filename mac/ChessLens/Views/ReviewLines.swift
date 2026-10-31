@@ -23,7 +23,7 @@ private func tokens(_ pos: Position, _ pv: [String]) -> [LineToken] {
     return out
 }
 
-/// Expanded body of a critical-moment row: why the move was bad and what was better.
+/// Body of a critical-moment note: why the move was bad (or good) and what was better.
 struct MomentDetail: View {
     @Environment(AppModel.self) private var app
     let id: Int
@@ -103,7 +103,8 @@ private struct LineBlock: View {
     }
 }
 
-/// Icon-only Explain and the resulting AI lesson for one moment.
+/// Icon-only Explain and the resulting AI lesson for one moment. Without AI set up it shows nothing:
+/// the summary carries the one setup hint.
 private struct CommentaryBlock: View {
     @Environment(AppModel.self) private var app
     let id: Int
@@ -112,8 +113,11 @@ private struct CommentaryBlock: View {
     var body: some View {
         let ai = app.review.commentary
         let state = ai.states[id]
+        let ready = AIHub.shared.isReady
         VStack(alignment: .leading, spacing: 8) {
             switch state {
+            case nil where !ready, .needsSignIn? where !ready:
+                EmptyView()
             case nil:
                 Button { ai.explain(id, game: app.game, review: app.review) } label: {
                     Image(systemName: "sparkles").font(.system(size: 12)).foregroundStyle(Theme.ink2)

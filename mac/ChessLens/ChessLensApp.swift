@@ -69,7 +69,7 @@ struct AppCommands: Commands {
         CommandMenu("Analysis") {
             Button(model.engineEnabled ? "Turn Engine Off" : "Turn Engine On") { model.engineEnabled.toggle() }
                 .keyboardShortcut("e")
-            Button("Review Game") { model.sideTab = .review; model.showInspector = true; model.startReview() }
+            Button("Review Game") { model.showInspector = true; model.startReview() }
                 .keyboardShortcut("r")
         }
         CommandGroup(after: .sidebar) {

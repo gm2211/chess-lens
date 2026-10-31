@@ -31,7 +31,6 @@ extension AppModel {
         flipped = setup.userSide == .black
         let session = PlaySession(app: self, setup: setup, start: currentID)
         playSession = session
-        sideTab = .moves
         refreshEngine()
         session.begin()
     }
@@ -46,7 +45,6 @@ extension AppModel {
     /// Ends the session and runs the usual review on the game that was played.
     func reviewPlayedGame() {
         endPlay()
-        sideTab = .review
         showInspector = true
         startReview()
     }

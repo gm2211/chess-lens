@@ -137,16 +137,3 @@ struct PlayBanner: View {
             .help("Undo your last move and the reply")
     }
 }
-
-/// Stands in for the engine and review panels while the evaluation is hidden.
-struct PlayHiddenNotice: View {
-    var body: some View {
-        VStack(spacing: 4) {
-            Text("Evaluation hidden").font(.display(20)).foregroundStyle(Theme.ink)
-            Text("It comes back when the game ends or you stop playing.")
-                .font(.system(size: 13)).foregroundStyle(Theme.ink3).multilineTextAlignment(.center)
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
