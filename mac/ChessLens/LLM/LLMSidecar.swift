@@ -75,6 +75,7 @@ actor LLMSidecar {
     private var process: Process?
     private var input: FileHandle?
     private var readTask: Task<Void, Never>?
+    private var output: FileHandle?
     private var generation = 0
     private var nextID = 0
     private var pending: [String: AsyncStream<Event>.Continuation] = [:]
@@ -255,12 +256,21 @@ actor LLMSidecar {
         process = p
         input = stdin.fileHandleForWriting
         let handle = stdout.fileHandleForReading
+        output = handle
+        // readabilityHandler rather than `handle.bytes.lines`: the async byte sequence never delivered the sidecar's
+        // replies inside the app (it did in a command-line harness), so every request hung.
+        let lines = AsyncStream<String> { cont in
+            let buffer = LineBuffer()
+            handle.readabilityHandler = { h in
+                let data = h.availableData
+                if data.isEmpty { h.readabilityHandler = nil; cont.finish(); return }
+                for line in buffer.append(data) { cont.yield(line) }
+            }
+        }
         readTask = Task { [weak self] in
-            do {
-                for try await line in handle.bytes.lines {
-                    await self?.handle(line: line, gen: gen)
-                }
-            } catch {}
+            for await line in lines {
+                await self?.handle(line: line, gen: gen)
+            }
         }
     }
 
@@ -275,6 +285,8 @@ actor LLMSidecar {
         generation += 1
         readTask?.cancel()
         readTask = nil
+        output?.readabilityHandler = nil
+        output = nil
         process = nil
         try? input?.close()
         input = nil
@@ -325,5 +337,21 @@ actor LLMSidecar {
         }
         return LLMStatus(ready: r["ready"] as? Bool ?? false, account: r["account"] as? String, models: models,
                          error: r["error"] as? String, awaitingCode: r["awaitingCode"] as? Bool ?? false)
+    }
+}
+
+/// Splits stdout chunks into newline-terminated lines. Only touched from the pipe's readability handler, which
+/// FileHandle calls serially.
+private final class LineBuffer: @unchecked Sendable {
+    private var pending = Data()
+
+    func append(_ data: Data) -> [String] {
+        pending.append(data)
+        var lines: [String] = []
+        while let nl = pending.firstIndex(of: 0x0A) {
+            lines.append(String(decoding: pending[pending.startIndex..<nl], as: UTF8.self))
+            pending.removeSubrange(pending.startIndex...nl)
+        }
+        return lines
     }
 }
