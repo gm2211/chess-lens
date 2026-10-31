@@ -15,22 +15,26 @@ struct ReviewPanel: View {
                     }
                     .pickerStyle(.inline).labelsHidden()
                 } label: {
-                    Label(review.selectedDepth.label, systemImage: "gauge.with.dots.needle.50percent")
-                        .font(.system(size: 13))
+                    Label("\(review.selectedDepth.rawValue)", systemImage: "gauge.with.dots.needle.50percent")
+                        .font(.system(size: 13, weight: .medium))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .padding(.horizontal, 10).frame(height: 30)
+                .padding(.horizontal, 10).frame(height: 28)
                 .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 5))
-                .help("Review depth")
+                .help("Review depth: \(review.selectedDepth.label)")
                 .disabled(review.running)
-                Button { app.startReview() } label: { Label("Review", systemImage: "sparkle.magnifyingglass").frame(height: 30) }
+                Button { app.startReview() } label: { Label("Review", systemImage: "play.fill").frame(height: 28) }
                     .buttonStyle(PrimaryButtonStyle())
                     .help("Review the game with the engine")
                     .disabled(review.running || !app.engine.isAvailable)
-                Spacer()
+                Spacer(minLength: 8)
+                // TODO(ai-hub): wire real provider name, readiness and popover.
+                AIProviderChip(name: "AI", ready: false) {
+                    Text("AI providers").font(.system(size: 13)).padding(16)
+                }
             }
-            .padding(14)
+            .padding(.horizontal, 16).padding(.vertical, 12)
 
             if review.running {
                 HStack(spacing: 12) {
@@ -40,7 +44,7 @@ struct ReviewPanel: View {
                         .font(.mono(12.5)).foregroundStyle(Theme.ink3).frame(minWidth: 64, alignment: .trailing)
                     Button("Cancel") { app.cancelReview() }.buttonStyle(QuietButtonStyle())
                 }
-                .padding(.horizontal, 14).padding(.bottom, 12)
+                .padding(.horizontal, 16).padding(.bottom, 12)
             }
 
             Divider()
@@ -76,7 +80,7 @@ private struct ReviewResults: View {
 
             EvalGraph().padding(.horizontal, 14)
 
-            HStack {
+            HStack(spacing: 8) {
                 Text("Critical moments").font(.display(19))
                 Spacer()
                 ExplainAllButton(ids: review.criticalMoments())
@@ -140,7 +144,6 @@ private struct MomentRow: View {
         let node = app.game.nodes[id]
         let entry = app.review.entries[id]
         let parent = node.parent.map { app.game.nodes[$0] }
-        let best = parent.flatMap { p in app.review.entries[p.id]?.best.flatMap { b in p.position.move(fromUCI: b).map { p.position.san($0) } } }
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 expanded.toggle()
@@ -151,9 +154,11 @@ private struct MomentRow: View {
                         .rotationEffect(.degrees(expanded ? 90 : 0)).frame(width: 8)
                     Text("\(parent?.position.fullmove ?? 0)\(parent?.position.turn == .white ? "." : "\u{2026}") \(node.san)").font(.mono(14, weight: .semibold))
                     if let c = entry?.cls { Text(c.rawValue).font(.mono(13, weight: .bold)).foregroundStyle(Theme.color(for: c)) }
-                    Spacer()
-                    Text("\(best.map { "best \($0)" } ?? "") \u{00B7} \u{2212}\(Int((entry?.loss ?? 0).rounded()))%")
-                        .font(.mono(12.5)).foregroundStyle(Theme.ink3)
+                    Spacer(minLength: 8)
+                    if let prev = parent.flatMap({ app.review.entries[$0.id] }), let e = entry {
+                        Text("\(prev.eval.display) \u{2192} \(e.eval.display)")
+                            .font(.mono(12)).foregroundStyle(Theme.ink3).lineLimit(1)
+                    }
                 }
                 .padding(.vertical, 9).padding(.horizontal, 2)
                 .contentShape(Rectangle())
