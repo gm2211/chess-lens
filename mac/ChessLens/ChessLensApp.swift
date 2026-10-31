@@ -58,6 +58,9 @@ struct AppCommands: Commands {
         CommandMenu("Board") {
             Button(model.playSession == nil ? "Continue Against Engine\u{2026}" : "Stop Playing Against Engine") { model.togglePlay() }
                 .keyboardShortcut("p", modifiers: [.command, .option])
+            Button("Ask AI About This Position\u{2026}") { model.toggleAsk() }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .disabled(!model.canAskAI && !model.ask.isOpen)
             Divider()
             Button("Flip Board") { model.toggleFlip() }.keyboardShortcut("f", modifiers: [.command, .shift])
             Divider()

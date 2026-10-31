@@ -277,6 +277,8 @@ private struct MoveButton: View {
                 Button("Make Main Line") { app.promote(id) }
             }
             Button("Continue Against Engine From Here") { app.requestPlay(from: id) }
+            Button("Ask AI About This Move\u{2026}") { app.askAbout(id) }
+                .disabled(!app.canAskAI)
             Divider()
             Button("Delete From Here", role: .destructive) { app.deleteFrom(id) }
         }

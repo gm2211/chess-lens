@@ -49,6 +49,7 @@ final class AppModel {
     let engine = EngineController()
     let review = ReviewModel()
     let importer = ImportModel()
+    let ask = AskAI()                            // "Ask AI", see AppModel+Ask
 
     private var layoutCache: [Int: [PieceInstance]] = [:]
     private var toastTask: Task<Void, Never>?
@@ -196,6 +197,7 @@ final class AppModel {
         }
         layoutCache = [:]
         review.reset()
+        ask.reset()
         currentID = cur
         didMove()
     }
@@ -206,6 +208,7 @@ final class AppModel {
         endPlay()
         engine.clearLines()
         review.reset()
+        ask.reset()
         game = g
         currentID = 0
         self.flipped = flipped

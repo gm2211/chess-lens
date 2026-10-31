@@ -61,11 +61,11 @@ struct GroundedAnswer {
 
 /// Runs a completion with the engine tool (see `EngineTool`): while the model replies with an `<engine/>` tag the
 /// app answers it and re-sends the transcript; the final answer's moves are checked against the data, and if any
-/// are unsupported the model is asked once more with a note naming them.
+/// are unsupported the model is asked once more with a note naming them. `onPartial` receives the text as it streams.
 @MainActor
 enum AIToolLoop {
     static func run(hub: AIHub, system: String, prompt: String, maxTokens: Int,
-                    allowed base: Set<String>, tool: Bool) async throws -> GroundedAnswer {
+                    allowed base: Set<String>, tool: Bool, onPartial: (@MainActor (String) -> Void)? = nil) async throws -> GroundedAnswer {
         var allowed = base
         var turns: [EngineTool.Turn] = []
         var calls = 0
@@ -76,7 +76,8 @@ enum AIToolLoop {
         for _ in 0..<(budget + 4) {
             try Task.checkCancellation()
             let p = EngineTool.transcript(prompt: prompt, turns: turns, callsLeft: max(0, budget - calls), note: note)
-            let text = try await collect(hub: hub, system: system, prompt: p, maxTokens: maxTokens, stopAtTag: budget > 0)
+            let text = try await collect(hub: hub, system: system, prompt: p, maxTokens: maxTokens,
+                                    stopAtTag: budget > 0, onPartial: onPartial)
             let requests = EngineTool.requests(in: text)
             let final = stripTags(text)
             if !requests.isEmpty, calls < budget {
@@ -123,10 +124,17 @@ enum AIToolLoop {
     }
 
     /// Collects the streamed answer; with `stopAtTag`, stops reading as soon as a complete engine tag has arrived.
-    private static func collect(hub: AIHub, system: String, prompt: String, maxTokens: Int, stopAtTag: Bool) async throws -> String {
+    private static func collect(hub: AIHub, system: String, prompt: String, maxTokens: Int, stopAtTag: Bool,
+                                        onPartial: (@MainActor (String) -> Void)?) async throws -> String {
         var text = ""
         for try await chunk in hub.complete(system: system, prompt: prompt, maxTokens: maxTokens) {
             text += chunk
+            // Streamed text is only shown for a reply that is not an engine request.
+            if let onPartial, !text.localizedCaseInsensitiveContains("<engine") {
+                var shown = stripTags(text)
+                if let r = shown.range(of: "<[^>]*$", options: .regularExpression) { shown.removeSubrange(r) }   // a tag still arriving
+                onPartial(shown)
+            }
             if stopAtTag, EngineTool.hasCompleteRequest(text) { break }
         }
         try Task.checkCancellation()

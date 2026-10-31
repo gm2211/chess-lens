@@ -31,6 +31,7 @@ extension AppModel {
         flipped = setup.userSide == .black
         let session = PlaySession(app: self, setup: setup, start: currentID)
         playSession = session
+        if session.hidesEvaluation { ask.reset() }      // the answers would leak what the engine thinks
         refreshEngine()
         session.begin()
     }
