@@ -2,109 +2,68 @@ import SwiftUI
 import Charts
 import ChessCore
 
-struct ReviewPanel: View {
+/// Top of the annotated game once a review has run: a foldable summary (AI lesson and a card per side),
+/// the eval graph and the critical-moments line with "Explain all".
+struct ReviewSummarySection: View {
     @Environment(AppModel.self) private var app
-
-    var body: some View {
-        @Bindable var review = app.review
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Menu {
-                    Picker("Depth", selection: $review.selectedDepth) {
-                        ForEach(ReviewDepth.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.inline).labelsHidden()
-                } label: {
-                    Label("\(review.selectedDepth.rawValue)", systemImage: "gauge.with.dots.needle.50percent")
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .padding(.horizontal, 10).frame(height: 28)
-                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 5))
-                .help("Review depth: \(review.selectedDepth.label)")
-                .disabled(review.running)
-                Button { app.startReview() } label: { Label("Review", systemImage: "play.fill").frame(height: 28) }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .help("Review the game with the engine")
-                    .disabled(review.running || !app.engine.isAvailable)
-                Spacer(minLength: 8)
-                AIProviderChip(name: AIHub.shared.selected.displayName, ready: AIHub.shared.isReady) {
-                    AIProvidersView().padding(12)
-                }
-                .task { await AIHub.shared.refresh(AIHub.shared.selected) }
-            }
-            .padding(.horizontal, 16).padding(.vertical, 12)
-
-            if review.running {
-                HStack(spacing: 12) {
-                    ProgressView(value: Double(review.done), total: Double(max(review.path.count, 1)))
-                        .progressViewStyle(.linear).tint(Theme.accent)
-                    Text("\(review.done) / \(review.path.count)")
-                        .font(.mono(12.5)).foregroundStyle(Theme.ink3).frame(minWidth: 64, alignment: .trailing)
-                    Button("Cancel") { app.cancelReview() }.buttonStyle(QuietButtonStyle())
-                }
-                .padding(.horizontal, 16).padding(.bottom, 12)
-            }
-
-            Divider()
-            if review.hasResults {
-                ScrollView { ReviewResults().padding(.bottom, 14) }
-            } else {
-                VStack(spacing: 6) {
-                    Text(review.running ? "Reviewing\u{2026}" : "Find the turning points").font(.display(20)).foregroundStyle(Theme.ink)
-                    Text(review.running
-                         ? "Analysing every position at depth \(review.depth.rawValue)."
-                         : "The engine plays through every move of the line you are viewing, charts the evaluation and flags inaccuracies, mistakes and blunders.")
-                        .font(.system(size: 13)).foregroundStyle(Theme.ink3).multilineTextAlignment(.center)
-                }
-                .padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            }
-        }
-        .background(Theme.surface)
-    }
-}
-
-private struct ReviewResults: View {
-    @Environment(AppModel.self) private var app
+    @AppStorage("reviewSummaryCollapsed") private var collapsed = false
 
     var body: some View {
         let review = app.review
         let s = review.summary(game: app.game)
-        let phases = review.phaseSummary(game: app.game)
         let moments = review.criticalMoments()
-        VStack(alignment: .leading, spacing: 14) {
-            if !review.running {
-                SummaryHero().padding(.horizontal, 14).padding(.top, 14)
-            }
-            HStack(alignment: .top, spacing: 10) {
-                SummaryCard(name: "White", dark: false, s: s.white, phases: phases[.white] ?? [:])
-                SummaryCard(name: "Black", dark: true, s: s.black, phases: phases[.black] ?? [:])
-            }
-            .padding(.horizontal, 14).padding(.top, review.running ? 14 : 0)
-
-            EvalGraph().padding(.horizontal, 14)
-
-            HStack(spacing: 8) {
-                Text("Critical moments").font(.display(19))
-                Spacer()
-                ExplainAllButton(ids: moments)
-            }
-            .padding(.horizontal, 14)
-            if moments.isEmpty {
-                Text(review.running ? "Collecting\u{2026}" : "No critical moments found. Clean game.")
-                    .font(.system(size: 13)).foregroundStyle(Theme.ink3).padding(.horizontal, 14)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(moments, id: \.self) { id in
-                        MomentRow(id: id)
-                        Divider()
+        VStack(alignment: .leading, spacing: 12) {
+            Button { withAnimation(.easeOut(duration: 0.15)) { collapsed.toggle() } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.ink3)
+                        .rotationEffect(.degrees(collapsed ? 0 : 90)).frame(width: 8)
+                    SectionLabel("Summary")
+                    Spacer(minLength: 6)
+                    if collapsed {
+                        Text(accuracyLine(s)).font(.system(size: 12, weight: .medium).monospacedDigit()).foregroundStyle(Theme.ink3)
                     }
-                }.padding(.horizontal, 14)
+                }
+                .contentShape(Rectangle())
             }
-            if case .done(let g, _)? = review.lesson.state, !g.exercises.isEmpty {
-                ExercisesSection(exercises: g.exercises).padding(.horizontal, 14)
+            .buttonStyle(.plain)
+            .help(collapsed ? "Show the summary" : "Hide the summary")
+            if !collapsed {
+                if !review.running { SummaryHero() }
+                let phases = review.phaseSummary(game: app.game)
+                HStack(alignment: .top, spacing: 10) {
+                    SummaryCard(name: "White", dark: false, s: s.white, phases: phases[.white] ?? [:])
+                    SummaryCard(name: "Black", dark: true, s: s.black, phases: phases[.black] ?? [:])
+                }
             }
+            EvalGraph()
+            HStack(spacing: 8) {
+                Text(momentsText(moments.count, running: review.running))
+                    .font(.system(size: 12.5)).foregroundStyle(Theme.ink3)
+                Spacer(minLength: 6)
+                if AIHub.shared.isReady { ExplainAllButton(ids: moments) }
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+    }
+
+    private func accuracyLine(_ s: (white: SideSummary, black: SideSummary)) -> String {
+        func pct(_ a: Double?) -> String { a.map { "\(Int($0.rounded()))%" } ?? "\u{2013}" }
+        return "White \(pct(s.white.accuracy)) \u{00B7} Black \(pct(s.black.accuracy))"
+    }
+
+    private func momentsText(_ n: Int, running: Bool) -> String {
+        if n == 0 { return running ? "Collecting critical moments\u{2026}" : "No critical moments found. Clean game." }
+        return "\(n) critical moment\(n == 1 ? "" : "s"), annotated in the moves below."
+    }
+}
+
+/// The lesson's exercises, shown after the last move.
+struct ReviewExercises: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        if case .done(let g, _)? = app.review.lesson.state, !g.exercises.isEmpty {
+            ExercisesSection(exercises: g.exercises).padding(.horizontal, 14).padding(.vertical, 12)
         }
     }
 }
@@ -434,51 +393,6 @@ private struct PhaseChip: View {
         }
         return "\(phase.name): \(acc)% accuracy over \(stat.moves) move\(stat.moves == 1 ? "" : "s")"
             + (bits.isEmpty ? "" : " (\(bits.joined(separator: ", ")))")
-    }
-}
-
-private struct MomentRow: View {
-    @Environment(AppModel.self) private var app
-    let id: Int
-    @State private var expanded = false
-
-    var body: some View {
-        if app.game.nodes.indices.contains(id) { content } else { EmptyView() }
-    }
-
-    @ViewBuilder private var content: some View {
-        let node = app.game.nodes[id]
-        let entry = app.review.entries[id]
-        let parent = node.parent.map { app.game.nodes[$0] }
-        let concept: String? = if case .done(let l, _)? = app.review.commentary.states[id] { l.concept } else { nil }
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                expanded.toggle()
-                app.goto(id)
-            } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .center, spacing: 8) {
-                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.ink3)
-                            .rotationEffect(.degrees(expanded ? 90 : 0)).frame(width: 8)
-                        Text(moveLabel(app.game, id)).font(.mono(14, weight: .semibold))
-                        if let c = entry?.cls { ClassBadge(cls: c).help(c.name.prefix(1).uppercased() + c.name.dropFirst()) } else { TurnBadge() }
-                        Spacer(minLength: 8)
-                        if let prev = parent.flatMap({ app.review.entries[$0.id] }), let e = entry {
-                            Text("\(prev.eval.display) \u{2192} \(e.eval.display)")
-                                .font(.mono(12)).foregroundStyle(Theme.ink3).lineLimit(1)
-                        }
-                    }
-                    if let concept, !expanded {
-                        Text(concept.prefix(1).uppercased() + concept.dropFirst())
-                            .font(.system(size: 12)).foregroundStyle(Theme.ink3).lineLimit(1).padding(.leading, 16)
-                    }
-                }
-                .padding(.vertical, 9).padding(.horizontal, 2)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if expanded { MomentDetail(id: id).padding(.leading, 18).padding(.bottom, 10) }
-        }
     }
 }
 

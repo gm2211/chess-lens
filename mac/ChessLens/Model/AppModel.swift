@@ -4,11 +4,6 @@ import AppKit
 import UniformTypeIdentifiers
 import ChessCore
 
-enum SideTab: String, CaseIterable, Identifiable {
-    case moves = "Moves", engine = "Engine", review = "Review"
-    var id: String { rawValue }
-}
-
 enum SampleGames {
     static let opera = """
     [Event "Opera Game"]
@@ -40,7 +35,6 @@ final class AppModel {
     }
 
     // MARK: UI state
-    var sideTab: SideTab = .moves
     var showInspector = true
     var engineEnabled = true { didSet { if engineEnabled != oldValue { refreshEngine() } } }
     var showImport = false
@@ -219,7 +213,6 @@ final class AppModel {
         epoch += 1
         engine.newGame()
         didMove()
-        sideTab = .moves
         if let toast { showToast(toast) }
     }
 

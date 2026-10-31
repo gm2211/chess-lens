@@ -8,11 +8,12 @@ private enum MoveToken {
     case close(Int)
 }
 
-/// One visual row of the move table: a numbered main-line pair, or an inset block of
-/// comments and side variations hanging off the move above it.
+/// One visual row of the move table: a numbered main-line pair, an inset block of
+/// comments and side variations hanging off the move above it, or a review note on a critical moment.
 private enum MoveRow {
     case pair(number: Int, white: Int?, black: Int?)
     case block(comment: String?, variations: [[MoveToken]])
+    case annotation(Int)
 }
 
 func displayComment(_ raw: String?) -> String? {
@@ -72,12 +73,34 @@ private func variationTokens(_ g: Game, parent: Int, node: Int) -> [MoveToken] {
     return out
 }
 
-private func buildRows(_ g: Game, showSource: Bool) -> [MoveRow] {
+/// Main-line node each critical moment's note hangs under: the moment itself, or for a moment inside a
+/// side variation, the main-line move that variation replaces.
+private func momentAnchors(_ g: Game, moments: [Int]) -> [Int: [Int]] {
+    var main = Set<Int>()
+    var cur = 0
+    while let next = g.nodes[cur].children.first { main.insert(next); cur = next }
+    var out: [Int: [Int]] = [:]
+    for id in moments where g.nodes.indices.contains(id) {
+        var a = id
+        while !main.contains(a), let p = g.nodes[a].parent {
+            if p == 0 || main.contains(p) { a = g.nodes[p].children.first ?? a; break }
+            a = p
+        }
+        if main.contains(a) { out[a, default: []].append(id) }
+    }
+    return out
+}
+
+private func buildRows(_ g: Game, showSource: Bool, anchors: [Int: [Int]]) -> [MoveRow] {
     var rows: [MoveRow] = []
     var pending: (number: Int, white: Int?, black: Int?)?
 
+    // A pair's moment notes follow the pair, so "10. Nxb5 cxb5" stays on one line.
     func flush() {
-        if let p = pending { rows.append(.pair(number: p.number, white: p.white, black: p.black)) }
+        if let p = pending {
+            rows.append(.pair(number: p.number, white: p.white, black: p.black))
+            for id in [p.white, p.black].compactMap({ $0 }) { rows += (anchors[id] ?? []).map { .annotation($0) } }
+        }
         pending = nil
     }
 
@@ -108,14 +131,22 @@ private func buildRows(_ g: Game, showSource: Bool) -> [MoveRow] {
     return rows
 }
 
+/// The annotated game: review summary and eval graph on top (after a review), then the move table with
+/// critical-moment notes under their moves, the result, and the lesson's exercises.
 struct MoveListView: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        let rows = buildRows(app.game, showSource: app.showSourceAnalysis)
+        let reviewed = app.review.hasResults && !app.hidesEvaluation
+        let anchors = reviewed ? momentAnchors(app.game, moments: app.review.criticalMoments()) : [:]
+        let rows = buildRows(app.game, showSource: app.showSourceAnalysis, anchors: anchors)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    if reviewed {
+                        ReviewSummarySection()
+                        Divider().padding(.bottom, 6)
+                    }
                     ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
                         rowView(row, index: i)
                     }
@@ -125,6 +156,7 @@ struct MoveListView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
                     }
+                    if reviewed && !app.review.running { ReviewExercises() }
                 }
                 .padding(.vertical, 6)
             }
@@ -173,6 +205,8 @@ struct MoveListView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .overlay(alignment: .leading) { Rectangle().fill(Theme.line2).frame(width: 2) }
             .padding(.leading, 44).padding(.trailing, 12).padding(.vertical, 4)
+        case .annotation(let id):
+            MomentAnnotation(id: id)
         }
     }
 

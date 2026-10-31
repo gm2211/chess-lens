@@ -105,6 +105,8 @@ final class ReviewModel {
     private(set) var done = 0
     private(set) var hasResults = false
     var selectedDepth: ReviewDepth = .standard
+    /// Critical moments whose annotation the user folded away in the move list.
+    var collapsedMoments: Set<Int> = []
 
     let commentary = AICommentary()
     let lesson = AISummary()
@@ -120,6 +122,7 @@ final class ReviewModel {
         commentary.reset()
         lesson.reset()
         entries = [:]; path = []; running = false; done = 0; hasResults = false
+        collapsedMoments = []
     }
 
     func cancel() { task?.cancel() }

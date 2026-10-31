@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The advanced engine form, shared by the Engine panel popover and the Settings window.
+/// The advanced engine form, shared by the engine strip popover and the Settings window.
 struct EngineSettingsForm: View {
     let settings: EngineSettings
 
