@@ -62,12 +62,18 @@ struct GroundedAnswer {
 /// Runs a completion with the engine tool (see `EngineTool`): while the model replies with an `<engine/>` tag the
 /// app answers it and re-sends the transcript; the final answer's moves are checked against the data, and if any
 /// are unsupported the model is asked once more with a note naming them. `onPartial` receives the text as it streams.
+/// `seed` requests are answered up front and shown to the model as if it had asked for them (they don't use its budget).
 @MainActor
 enum AIToolLoop {
     static func run(hub: AIHub, system: String, prompt: String, maxTokens: Int,
-                    allowed base: Set<String>, tool: Bool, onPartial: (@MainActor (String) -> Void)? = nil) async throws -> GroundedAnswer {
+                    allowed base: Set<String>, tool: Bool, seed: [EngineToolRequest] = [],
+                    onPartial: (@MainActor (String) -> Void)? = nil) async throws -> GroundedAnswer {
         var allowed = base
         var turns: [EngineTool.Turn] = []
+        for r in seed {
+            try Task.checkCancellation()
+            turns.append(EngineTool.Turn(request: r.tag, reply: await answer(r, allowed: &allowed)))
+        }
         var calls = 0
         // Apple's on-device model has a small context; each round re-sends the transcript.
         let budget = tool ? (hub.selected == .apple ? 2 : EngineTool.maxCalls) : 0

@@ -141,7 +141,24 @@ final class AskAI {
         try await AIToolLoop.run(hub: hub, system: AskPrompt.system(tool: tool, compact: compact),
                                  prompt: AskPrompt.user(ctx.subject, turns: turns, question: q, compact: compact),
                                  maxTokens: 500, allowed: allowed, tool: tool,
+                                 seed: tool ? Self.namedMoveChecks(q, ctx.subject) : [],
                                  onPartial: { [weak self] text in if self?.status == .thinking { self?.partial = text } })
+    }
+
+    /// Moves the user names ("why not Qh5?") are run through the engine before the model answers, from the position
+    /// before the last move when legal there (the usual "instead of" question), otherwise from the current position.
+    static func namedMoveChecks(_ q: String, _ s: AskPrompt.Subject) -> [EngineToolRequest] {
+        var out: [EngineToolRequest] = []
+        // Bare pawn moves ("why not e5?") aren't citations elsewhere (they read like squares); here a legal one counts.
+        let pushes = q.matches(of: /\b[a-h][1-8]\b/).map { String($0.output) }
+        for san in AskPrompt.citedMoves(in: [q]) + pushes {
+            let from = [s.before, s.position].compactMap { $0 }.first { (try? $0.parseSAN(san)) != nil }
+            guard let from else { continue }
+            let r = EngineToolRequest(fen: from.fen, moves: [san])
+            if !out.contains(r) { out.append(r) }
+            if out.count == 3 { break }
+        }
+        return out
     }
 
     // MARK: Context
