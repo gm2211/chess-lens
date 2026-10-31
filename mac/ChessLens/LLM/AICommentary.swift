@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import Observation
 import ChessCore
 
@@ -11,6 +10,7 @@ final class AICommentary {
         case loading
         case text(String)
         case needsSignIn
+        /// Unused now (AI never signs in on its own); kept so views that switch over `State` still compile.
         case signingIn
         case failed(String)
     }
@@ -21,10 +21,9 @@ final class AICommentary {
 
     private var tasks: [Int: Task<Void, Never>] = [:]
     private var batchTask: Task<Void, Never>?
-    private var signInTask: Task<Void, Never>?
-    private let sidecar: LLMSidecar
+    private let hub: AIHub
 
-    init(sidecar: LLMSidecar = .shared) { self.sidecar = sidecar }
+    init(hub: AIHub = .shared) { self.hub = hub }
 
     func reset() {
         cancelAll()
@@ -34,7 +33,6 @@ final class AICommentary {
     /// Cancels every in-flight request; cached explanations stay.
     func cancelAll() {
         batchTask?.cancel(); batchTask = nil; batch = nil
-        signInTask?.cancel(); signInTask = nil
         for t in tasks.values { t.cancel() }
         tasks = [:]
         for (id, s) in states where s == .loading || s == .signingIn { states[id] = nil }
@@ -68,30 +66,13 @@ final class AICommentary {
         }
     }
 
-    /// Signs in through the system browser, then explains `id`.
-    func signIn(then id: Int, game: Game, review: ReviewModel) {
-        guard signInTask == nil else { return }
-        states[id] = .signingIn
-        signInTask = Task {
-            defer { signInTask = nil }
-            do {
-                _ = try await sidecar.signIn { url in DispatchQueue.main.async { _ = NSWorkspace.shared.open(url) } }
-                states[id] = nil
-                explain(id, game: game, review: review)
-            } catch LLMError.canceled {
-                states[id] = nil
-            } catch {
-                states[id] = .failed(error.localizedDescription)
-            }
-        }
-    }
-
     private func run(_ id: Int, prompt: String) async {
         do {
-            guard try await sidecar.status().signedIn else { states[id] = .needsSignIn; return }
-            let stored = UserDefaults.standard.string(forKey: AIAccountView.modelKey) ?? ""
+            // Never signs in: with no provider set up the line just says so (Settings > AI, or the header chip).
+            if !hub.isReady { await hub.refresh(hub.selected) }
+            guard hub.isReady else { states[id] = .needsSignIn; return }
             var text = ""
-            for try await chunk in sidecar.complete(model: stored.isEmpty ? nil : stored, system: CoachPrompt.system, prompt: prompt, maxTokens: 400) {
+            for try await chunk in hub.complete(system: CoachPrompt.system, prompt: prompt, maxTokens: 400) {
                 text += chunk
             }
             if Task.isCancelled { if states[id] == .loading { states[id] = nil }; return }
@@ -103,6 +84,7 @@ final class AICommentary {
             if states[id] == .loading { states[id] = nil }
         } catch let e as LLMError where e.needsSignIn {
             states[id] = .needsSignIn
+            await hub.refresh(hub.selected)
         } catch {
             if Task.isCancelled { if states[id] == .loading { states[id] = nil }; return }
             states[id] = .failed(error.localizedDescription)

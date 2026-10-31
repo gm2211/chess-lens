@@ -1,4 +1,4 @@
-// Bundles src/main.mjs + the vendored @byos/chatgpt-local (TypeScript source) + jose into out/sidecar.mjs
+// Bundles src/main.mjs + the vendored @byos packages (chatgpt-local, claude-local, providers; TypeScript source) + jose into out/sidecar.mjs
 // and copies the @napi-rs/keyring native addon next to it. Run through mac/scripts/build-sidecar.sh.
 import { build } from 'esbuild';
 import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
@@ -12,7 +12,12 @@ await build({
   entryPoints: [here('src/main.mjs')],
   outfile: here('out/sidecar.mjs'),
   bundle: true, platform: 'node', format: 'esm', target: 'node24', legalComments: 'none',
-  alias: { '@byos/chatgpt-local': here('byos/byos-chatgpt-local/src/index.ts') },
+  alias: {
+    '@byos/chatgpt-local': here('byos/byos-chatgpt-local/src/index.ts'),
+    '@byos/claude-local': here('byos/byos-claude-local/src/index.ts'),
+    '@byos/providers': here('byos/byos-providers/src/index.ts'),
+    '@byos/core': here('byos/byos-core/src/index.ts'),
+  },
   // The package's own keyring loader needs node_modules; the shim dlopen()s the addon beside the bundle instead.
   plugins: [{
     name: 'keyring-shim',

@@ -6,7 +6,7 @@ A native macOS chess analysis app (SwiftUI, Apple silicon, macOS 14+).
 - **Import PGN / FEN.** Paste text, open `.pgn` files (multi-game files supported), or type a FEN.
 - **Stockfish 18.** Bundled native engine with multiple lines, presets (Shallow / Medium / Deep) and advanced settings (depth, lines, threads, hash).
 - **Game review.** Accuracy per side, an eval graph, and critical moments that show the refutation the move allowed, the better line, and tactic tags ("hangs the knight on f6", "allows a fork").
-- **AI commentary with your own subscription.** Plain-English explanations of critical moments through [BYOS](https://github.com/gm2211/byos), grounded in the engine's lines. No API keys are stored by the app; sign-in tokens stay in the macOS Keychain.
+- **AI commentary with your own account.** Plain-English explanations of critical moments, grounded in the engine's lines. Pick a provider in Settings > AI: ChatGPT (Plus/Pro sign-in), Claude (Pro/Max subscription sign-in), a Claude API key, OpenRouter, Grok (SuperGrok sign-in or key), Groq, Hugging Face, or Apple Intelligence on-device (macOS 26+). Built on [BYOS](https://github.com/gm2211/byos). Keys and sign-in tokens stay in the macOS Keychain, behind a helper process; the app never sees them.
 
 <!-- demo video goes here -->
 
