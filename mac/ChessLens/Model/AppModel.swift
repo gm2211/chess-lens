@@ -49,6 +49,8 @@ final class AppModel {
     var pendingImport: PendingImport?                // a drop waiting for confirmation
     @ObservationIgnored var pendingTask: Task<Void, Never>?
     private(set) var toastText: String?
+    var playSession: PlaySession?                    // "Continue against engine", see AppModel+Play
+    var showPlaySetup = false
 
     let engine = EngineController()
     let review = ReviewModel()
@@ -140,21 +142,24 @@ final class AppModel {
     private func didMove() {
         refreshEngine()
         persist()
+        playSession?.positionChanged()
     }
 
     // MARK: Moves
 
     func play(_ move: Move) {
+        if let s = playSession, !s.acceptsInput { return }
         do {
             let id = try game.addMove(move, after: currentID)
             currentID = id
+            playSession?.noteMove(to: id)
             didMove()
         } catch { showToast("That move isn't legal.") }
     }
 
     /// Plays the engine's suggestion (UCI) from the position before the current node.
     func playBest(fromParentOf id: Int) {
-        guard let parent = game.nodes[id].parent,
+        guard playSession == nil, let parent = game.nodes[id].parent,
               let uci = review.entries[parent]?.best,
               let move = game.nodes[parent].position.move(fromUCI: uci) else { return }
         currentID = parent
@@ -171,7 +176,7 @@ final class AppModel {
 
     /// Plays the first `count` moves of `pv` as a variation starting at node `id`.
     func playLine(_ pv: [String], count: Int, from id: Int) {
-        guard game.nodes.indices.contains(id) else { return }
+        guard playSession == nil, game.nodes.indices.contains(id) else { return }
         currentID = id
         playLine(pv, count: count)
     }
@@ -184,6 +189,7 @@ final class AppModel {
 
     func deleteFrom(_ id: Int) {
         guard id != 0, let parent = game.nodes[id].parent else { return }
+        endPlay()                                    // node ids change
         let path = game.path(to: parent)
         var choices: [Int] = []
         for (a, b) in zip(path, path.dropFirst()) { choices.append(game.nodes[a].children.firstIndex(of: b) ?? 0) }
@@ -203,6 +209,7 @@ final class AppModel {
     // MARK: Loading
 
     func loadGame(_ g: Game, flipped: Bool = false, toast: String? = nil) {
+        endPlay()
         engine.clearLines()
         review.reset()
         game = g
@@ -245,7 +252,7 @@ final class AppModel {
 
     func refreshEngine() {
         guard !review.running else { return }
-        if engineEnabled { engine.analyze(position) } else { engine.stopLive() }
+        if engineEnabled && !hidesEvaluation { engine.analyze(position) } else { engine.stopLive() }
     }
 
     func startReview() {
