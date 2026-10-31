@@ -326,18 +326,20 @@ final class AppModel {
     }
 
     /// ⌘V anywhere: image → screenshot flow, text → FEN or PGN.
+    /// Outside the import sheet the paste goes through the same confirmation card as a drop.
     func handlePasteboard(_ pb: NSPasteboard = .general) {
+        let confirm = !showImport
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            let url = urls.first {
-            handleFileURL(url)
+            if confirm { stageFile(url) } else { handleFileURL(url) }
             return
         }
         if let text = pb.string(forType: .string), !text.isEmpty {
-            handleText(text)
+            if confirm { stageText(text) } else { handleText(text) }
             return
         }
         if let image = NSImage(pasteboard: pb) {
-            handleImage(image)
+            if confirm { stageImage(image) } else { handleImage(image) }
             return
         }
         showToast("Nothing to paste. Copy a PGN, a FEN or a board screenshot first.")
