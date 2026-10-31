@@ -34,6 +34,10 @@ final class AppModel {
     private(set) var currentID = 0
     private(set) var epoch = 0                       // bumps when a different game is loaded
     var flipped = false
+    /// Show the source's own comments, variations, glyphs and evals in the move list (not the app's review marks).
+    var showSourceAnalysis = UserDefaults.standard.object(forKey: "showSourceAnalysis") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showSourceAnalysis, forKey: "showSourceAnalysis") }
+    }
 
     // MARK: UI state
     var sideTab: SideTab = .moves
