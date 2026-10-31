@@ -42,6 +42,8 @@ final class AppModel {
     var showImport = false
     var showFileImporter = false
     var isDropTargeted = false
+    var pendingImport: PendingImport?                // a drop waiting for confirmation
+    @ObservationIgnored var pendingTask: Task<Void, Never>?
     private(set) var toastText: String?
 
     let engine = EngineController()

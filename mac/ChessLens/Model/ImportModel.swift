@@ -180,19 +180,33 @@ final class ImportModel {
     }
 
     private func finishRecognition(_ r: RecognizedBoard) {
+        draft = Self.makeDraft(r)
+        shotState = .confirm
+    }
+
+    /// Turns a recognition result into an editable draft.
+    static func makeDraft(_ r: RecognizedBoard) -> ScreenshotDraft {
         let board = (try? Position.parseBoard(r.placement)) ?? [Piece?](repeating: nil, count: 64)
         // The side that just moved owns the piece on one of the highlighted squares.
         var toMove = Side.white
         for name in r.lastMoveSquares {
             if let sq = Sq.parse(name), let p = board[sq] { toMove = p.color.opposite; break }
         }
-        draft = ScreenshotDraft(
+        return ScreenshotDraft(
             board: board,
             uncertain: Set(r.uncertainSquares.compactMap(Sq.parse)),
             sideToMove: toMove,
             castling: ScreenshotDraft.possibleCastling(board),
             blackAtBottom: !r.whiteAtBottom,
             confidence: r.confidence)
+    }
+
+    /// Shows an already-read screenshot in the editor (used by the drop confirmation card).
+    func adopt(image: NSImage, draft: ScreenshotDraft) {
+        cancelScreenshot()
+        tab = .screenshot
+        shotImage = image
+        self.draft = draft
         shotState = .confirm
     }
 

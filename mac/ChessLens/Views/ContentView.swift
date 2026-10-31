@@ -28,8 +28,9 @@ struct ContentView: View {
             .fileImporter(isPresented: $app.showFileImporter, allowedContentTypes: ImportSheet.pgnTypes) { result in
                 if case .success(let url) = result { app.handleFileURL(url) }
             }
-            .onDrop(of: [.fileURL, .plainText], isTargeted: $app.isDropTargeted) { providers in handleDrop(providers) }
+            .onDrop(of: [.fileURL, .image, .url, .plainText], isTargeted: $app.isDropTargeted) { providers in handleDrop(providers) }
             .overlay { if app.isDropTargeted { dropOverlay } }
+            .overlay { if app.pendingImport != nil { ImportConfirmCard(inspectorWidth: app.showInspector ? 381 : 0) } }
             .overlay(alignment: .bottom) { toast }
             .focusable()
             .focused($focused)
@@ -88,7 +89,7 @@ struct ContentView: View {
             Theme.accentSoft.opacity(0.7)
             VStack(spacing: 8) {
                 Image(systemName: "square.and.arrow.down.on.square").font(.system(size: 34))
-                Text("Drop a PGN file or a board screenshot").font(.display(24))
+                Text("Drop a game, position, screenshot or link").font(.display(24))
             }
             .foregroundStyle(Theme.ink)
             .padding(30)
@@ -102,6 +103,7 @@ struct ContentView: View {
     // MARK: Input
 
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        if app.pendingImport != nil { return .ignored }       // the confirmation card owns the keyboard
         if press.modifiers.contains(.command) || press.modifiers.contains(.control) || press.modifiers.contains(.option) { return .ignored }
         switch press.key {
         case .leftArrow: app.back()
@@ -115,25 +117,7 @@ struct ContentView: View {
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        var handled = false
-        for p in providers {
-            if p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                handled = true
-                _ = p.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url else { return }
-                    Task { @MainActor in app.handleFileURL(url) }
-                }
-                break
-            } else if p.canLoadObject(ofClass: String.self) {
-                handled = true
-                _ = p.loadObject(ofClass: String.self) { s, _ in
-                    guard let s else { return }
-                    Task { @MainActor in app.handleText(s) }
-                }
-                break
-            }
-        }
-        return handled
+        DropLoader.load(providers) { app.handleDropped($0) }
     }
 }
 
