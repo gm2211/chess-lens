@@ -8,18 +8,25 @@ struct ReviewPanel: View {
     var body: some View {
         @Bindable var review = app.review
         VStack(spacing: 0) {
-            HStack(alignment: .bottom, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("DEPTH").font(.system(size: 11, weight: .semibold)).tracking(0.7).foregroundStyle(Theme.ink3)
+            HStack(spacing: 8) {
+                Menu {
                     Picker("Depth", selection: $review.selectedDepth) {
                         ForEach(ReviewDepth.allCases) { Text($0.label).tag($0) }
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: 190)
-                    .disabled(review.running)
+                    .pickerStyle(.inline).labelsHidden()
+                } label: {
+                    Label(review.selectedDepth.label, systemImage: "gauge.with.dots.needle.50percent")
+                        .font(.system(size: 13))
                 }
-                Button("Review game") { app.startReview() }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .padding(.horizontal, 10).frame(height: 30)
+                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 5))
+                .help("Review depth")
+                .disabled(review.running)
+                Button { app.startReview() } label: { Label("Review", systemImage: "sparkle.magnifyingglass").frame(height: 30) }
                     .buttonStyle(PrimaryButtonStyle())
+                    .help("Review the game with the engine")
                     .disabled(review.running || !app.engine.isAvailable)
                 Spacer()
             }

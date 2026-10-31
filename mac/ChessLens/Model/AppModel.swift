@@ -99,8 +99,14 @@ final class AppModel {
     /// Eval to show on the bar: live engine line first, then the review result.
     var barEval: Eval? {
         if let outcome = terminalEval { return outcome }
-        if engineEnabled, engine.linesFEN == position.fen, let l = engine.lines.first { return l.eval }
+        if engineEnabled, engine.linesFEN == position.fen, let l = engine.lines.first, l.depth >= barMinDepth { return l.eval }
         return review.entries[currentID]?.eval
+    }
+
+    /// Shallow search results swing wildly; the bar ignores them (EvalBar holds the previous value meanwhile).
+    private var barMinDepth: Int {
+        let cap = engine.settings.config.depthCap
+        return cap == 0 ? 12 : min(12, cap)
     }
 
     var terminalEval: Eval? {
