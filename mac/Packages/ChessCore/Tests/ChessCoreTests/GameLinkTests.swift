@@ -59,4 +59,20 @@ final class GameLinkTests: XCTestCase {
         XCTAssertNil(GameLink.url(in: "1. e4 e5"))
         XCTAssertNil(GameLink.url(in: "file:///tmp/x"))
     }
+
+    func testChessComOtherPathForms() {
+        XCTAssertEqual(link("https://www.chess.com/live/game/184727190848")?.fetchURL.absoluteString,
+                       "https://www.chess.com/callback/live/game/184727190848")
+        XCTAssertEqual(link("https://www.chess.com/daily/game/123456")?.kind, .chessCom(daily: true))
+        XCTAssertEqual(link("https://www.chess.com/game/184727190848")?.fetchURL.absoluteString,
+                       "https://www.chess.com/callback/live/game/184727190848")
+    }
+
+    func testChessgames() {
+        let l = link("https://www.chessgames.com/perl/chessgame?gid=1011478")
+        XCTAssertEqual(l?.kind, .chessgames)
+        XCTAssertEqual(l?.fetchURL.absoluteString, "https://www.chessgames.com/nodejs/game/viewGamePGN?text=1&gid=1011478")
+        XCTAssertEqual(l?.source, "chessgames.com")
+        XCTAssertEqual(link("https://www.chessgames.com/perl/chessplayer?pid=15940")?.kind, .generic)
+    }
 }
