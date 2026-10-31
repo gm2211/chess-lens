@@ -56,6 +56,9 @@ struct AppCommands: Commands {
             Button("Copy PGN") { model.copyPGN() }.keyboardShortcut("c", modifiers: [.command, .option])
         }
         CommandMenu("Board") {
+            Button(model.playSession == nil ? "Continue Against Engine\u{2026}" : "Stop Playing Against Engine") { model.togglePlay() }
+                .keyboardShortcut("p", modifiers: [.command, .option])
+            Divider()
             Button("Flip Board") { model.toggleFlip() }.keyboardShortcut("f", modifiers: [.command, .shift])
             Divider()
             Button("Previous Move") { model.back() }.keyboardShortcut("[")

@@ -214,8 +214,8 @@ private struct MoveButton: View {
     @ViewBuilder private var content: some View {
         let node = app.game.nodes[id]
         let current = id == app.currentID
-        let cls = app.review.entries[id]?.cls
-        let eval = app.showSourceAnalysis ? node.comment.flatMap(PGN.evalAnnotation) : nil
+        let cls = app.hidesEvaluation ? nil : app.review.entries[id]?.cls
+        let eval = app.showSourceAnalysis && !app.hidesEvaluation ? node.comment.flatMap(PGN.evalAnnotation) : nil
         let nags = app.showSourceAnalysis ? node.nags : []
         Button { app.goto(id) } label: {
             HStack(spacing: 0) {
@@ -242,6 +242,8 @@ private struct MoveButton: View {
             if let p = node.parent, app.game.nodes[p].children.first != id {
                 Button("Make Main Line") { app.promote(id) }
             }
+            Button("Continue Against Engine From Here") { app.requestPlay(from: id) }
+            Divider()
             Button("Delete From Here", role: .destructive) { app.deleteFrom(id) }
         }
         .accessibilityLabel(node.san)
