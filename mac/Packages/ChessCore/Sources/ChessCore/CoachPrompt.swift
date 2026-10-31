@@ -68,7 +68,7 @@ public enum CoachPrompt {
         }
     }
 
-    private static func numbered(_ sans: [String], endingBefore pos: Position) -> String {
+    static func numbered(_ sans: [String], endingBefore pos: Position) -> String {
         var ply = (pos.fullmove - 1) * 2 + (pos.turn == .white ? 0 : 1) - sans.count
         var parts: [String] = []
         for (i, s) in sans.enumerated() {

@@ -39,6 +39,7 @@ struct ContentView: View {
             .onKeyPress(phases: [.down, .repeat]) { press in handleKey(press) }
             .onAppear { focused = true; PasteMonitor.install(app) }
             .onChange(of: app.showImport) { _, shown in if !shown { focused = true } }
+            .onChange(of: app.ask.isOpen) { _, open in if !open { focused = true } }       // arrow keys work again
     }
 
     // MARK: Toolbar

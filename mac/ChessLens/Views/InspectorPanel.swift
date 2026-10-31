@@ -3,7 +3,7 @@ import ChessCore
 
 // MARK: - Inspector
 
-/// The side panel: review controls, the live engine strip, then the annotated game.
+/// The side panel: review controls, the live engine strip, then the annotated game, with "Ask AI" below it.
 /// The game's title and subtitle are in the window title, so the panel doesn't repeat them.
 struct InspectorView: View {
     @Environment(AppModel.self) private var app
@@ -17,6 +17,13 @@ struct InspectorView: View {
                 Divider()
             }
             MoveListView()
+                .frame(minHeight: 100)
+            Divider()
+            if app.ask.isOpen {
+                AskDrawer()
+            } else {
+                AskBar()
+            }
             Divider()
             HStack(spacing: 8) {
                 Button { app.copyFEN() } label: { Label("Copy FEN", systemImage: "doc.on.doc") }.buttonStyle(QuietButtonStyle())
