@@ -53,7 +53,7 @@ struct BoardView: View {
     /// On a notable reviewed move: the opponent's best reply (threat) and the move that was better.
     private var reviewArrows: [BoardArrow] {
         let review = app.review
-        guard review.hasResults, let e = review.entries[app.currentID], e.cls != nil,
+        guard review.hasResults, let e = review.entries[app.currentID], e.cls?.isError == true,
               let pid = app.node.parent else { return [] }
         var out: [BoardArrow] = []
         if let m = e.pv.first.flatMap({ Move(uci: $0) }) { out.append(BoardArrow(from: m.from, to: m.to, rank: 2, kind: .threat)) }

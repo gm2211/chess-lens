@@ -1,15 +1,25 @@
 import Foundation
 
-/// Prompt for the AI coach's explanation of one reviewed move. Pure, so it can be tested.
+/// Prompt for the AI coach's lesson on one reviewed move. Pure, so it can be tested.
+/// The engine has already picked the moment; the model's job is to teach the idea behind it.
 public enum CoachPrompt {
-    public static let system = """
-    You are a concise chess coach reviewing one move from a game the user played. \
-    In 2 to 4 sentences of plain English, explain concretely what the move allowed or missed, \
-    and what the idea of the better line was. \
-    Ground every claim in the lines and facts provided. Never mention or invent moves, captures, \
-    squares or tactics that are not in those lines or the game so far; if the lines do not show something, do not claim it. \
-    Refer to moves in SAN. No preamble, no headings, no bullet points, no markdown.
-    """
+    public static func system(tool: Bool) -> String {
+        """
+        You are a friendly chess coach helping an improving player learn from one moment of their game. \
+        The engine already found the mistake; your job is to teach the idea behind it in plain English.
+        Reply with only a JSON object:
+        {"concept": "2-5 words naming the idea, e.g. lead in development, king stuck in the centre, overloaded defender, trading when ahead, loose piece",
+        "idea": "1-2 sentences: why that concept mattered in this position",
+        "whatWentWrong": "1-2 sentences: what the player probably had in mind, and what was really true",
+        "betterIdea": "1-2 sentences: the better plan, with the engine's move as evidence",
+        "rule": "1 sentence: a rule of thumb or thinking habit that finds the better move, and how to spot the pattern next time"}
+        Write for a club player: plain words, little notation, no evaluation numbers. Cite at most 3 moves, and only \
+        moves from the data or from engine results. Never say a piece is on a square unless the FEN shows it. \
+        50 to 90 words in total.
+        If the move was strong (great or brilliant), teach the idea that made it work instead: "whatWentWrong" says \
+        what the opponent missed or allowed, "betterIdea" why the move works, "rule" the lesson to take from it.
+        """ + (tool ? "\n" + EngineTool.instructions : "")
+    }
 
     /// - Parameters:
     ///   - before: the position before the move.
@@ -19,26 +29,31 @@ public enum CoachPrompt {
     ///   - tags: deterministic tags from `lineTags`.
     ///   - refutation: UCI line from the position after the move. best: UCI line from `before`.
     ///   - history: SAN of the moves played before `move`, from the start of the game.
+    ///   - phase: the game phase of the move, if known.
+    ///   - maxHistory: only the last this-many plies of `history` are shown.
     public static func user(before: Position, move: Move, classification: String?,
                             evalBefore: Eval?, evalAfter: Eval?, tags: [LineTag],
                             refutation: [String], best: [String], history: [String],
-                            maxPlies: Int = 8) -> String {
+                            phase: GamePhase? = nil, maxPlies: Int = 8, maxHistory: Int = 24) -> String {
         let mover = before.turn
         let after = before.applyingUnchecked(move)
         var out: [String] = []
         out.append("Position before the move (FEN): \(before.fen)")
-        out.append("Side to move: \(mover == .white ? "White" : "Black")")
+        out.append("Side to move: \(mover == .white ? "White" : "Black")" + (phase.map { ", \($0.name.lowercased())" } ?? ""))
         let num = "\(before.fullmove)\(mover == .white ? "." : "\u{2026}")"
         out.append("Move played: \(num) \(before.san(move))" + (classification.map { " (\($0))" } ?? ""))
+        out.append("Position after it (FEN): \(after.fen)")
         if let b = evalBefore, let a = evalAfter {
-            out.append("Evaluation from the mover's point of view: \(pov(b, mover)) before, \(pov(a, mover)) after")
+            out.append("Evaluation from the mover's point of view (for your understanding, don't quote it): \(pov(b, mover)) before, \(pov(a, mover)) after")
         }
         if !tags.isEmpty { out.append("Tags: " + tags.map(\.text).joined(separator: "; ")) }
         let ref = after.numberedLine(fromUCI: refutation, maxPlies: maxPlies)
         if !ref.isEmpty { out.append("Engine line after the move played (refutation or threat): \(ref)") }
         let bst = before.numberedLine(fromUCI: best, maxPlies: maxPlies)
         if !bst.isEmpty { out.append("Engine's better line instead: \(bst)") }
-        out.append("Game so far: " + (history.isEmpty ? "(start of game)" : numbered(history, endingBefore: before)))
+        let shown = Array(history.suffix(maxHistory))
+        out.append("Game so far: " + (history.isEmpty ? "(start of game)"
+            : (shown.count < history.count ? "\u{2026} " : "") + numbered(shown, endingBefore: before)))
         return out.joined(separator: "\n")
     }
 

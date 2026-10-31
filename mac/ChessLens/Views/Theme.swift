@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Design tokens shared with the web version (see Assets.xcassets/Colors, generated from web/index.html).
 enum Theme {
@@ -29,12 +30,25 @@ enum Theme {
     static let blund = Color("blund")
     static let scrim = Color("scrim")
 
+    /// Positive classes ("!" great, "!!" brilliant). Not in the shared web palette yet, so defined here.
+    static let great = adaptive(light: (0.30, 0.50, 0.71), dark: (0.45, 0.64, 0.84))
+    static let brilliant = adaptive(light: (0.07, 0.58, 0.56), dark: (0.20, 0.72, 0.69))
+
     static func color(for cls: MoveClass) -> Color {
         switch cls {
         case .blunder: blund
         case .mistake: mist
         case .inaccuracy: inacc
+        case .great: great
+        case .brilliant: brilliant
         }
+    }
+
+    private static func adaptive(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let c = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: c.0, green: c.1, blue: c.2, alpha: 1)
+        })
     }
 }
 

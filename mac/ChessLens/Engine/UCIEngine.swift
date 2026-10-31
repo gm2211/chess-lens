@@ -9,6 +9,8 @@ enum SearchLimit: Sendable, Equatable {
     case infinite(depthCap: Int)
     /// `go depth N`.
     case depth(Int)
+    /// `go depth N movetime T`: whichever comes first (the AI's engine tool).
+    case depthTime(depth: Int, ms: Int)
 }
 
 enum EngineEvent: Sendable {
@@ -271,6 +273,7 @@ actor UCIEngine {
         switch limit {
         case .infinite: send("go infinite")
         case .depth(let d): send("go depth \(d)")
+        case .depthTime(let d, let ms): send("go depth \(d) movetime \(ms)")
         }
         return stream
     }
