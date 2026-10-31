@@ -32,13 +32,13 @@ public struct GameLink: Equatable, Sendable {
         if host == "lichess.org" || host.hasSuffix(".lichess.org") {
             // Study chapter: /study/<8>/<8>
             if parts.count >= 3, parts[0] == "study", isID(parts[1], [8]), isID(parts[2], [8]),
-               let u = URL(string: "https://lichess.org/api/study/\(parts[1])/\(parts[2]).pgn") {
+               let u = URL(string: "https://lichess.org/api/study/\(parts[1])/\(parts[2]).pgn?comments=true&variations=true&clocks=false") {
                 return GameLink(kind: .lichessStudy, fetchURL: u, accept: "application/x-chess-pgn", flipped: false, source: "lichess.org")
             }
             // Game: /<8 or 12>[/white|/black]; the exporter wants the 8-character game id.
             if let first = parts.first, isID(first, [8, 12]), !lichessReserved.contains(first.lowercased()),
                parts.count == 1 || (parts.count == 2 && ["white", "black"].contains(parts[1])),
-               let u = URL(string: "https://lichess.org/game/export/\(first.prefix(8))") {
+               let u = URL(string: "https://lichess.org/game/export/\(first.prefix(8))?evals=true&literate=true&clocks=false") {
                 return GameLink(kind: .lichessGame, fetchURL: u, accept: "application/x-chess-pgn", flipped: parts.count == 2 && parts[1] == "black", source: "lichess.org")
             }
         }
@@ -60,10 +60,13 @@ public struct GameLink: Equatable, Sendable {
         }
 
         if host == "chessgames.com" || host.hasSuffix(".chessgames.com") {
-            // Any page carrying ?gid=<n>, e.g. /perl/chessgame?gid=1011478.
-            let gid = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name.lowercased() == "gid" }?.value
+            // Any page carrying ?gid=<n>, e.g. /perl/chessgame?gid=1011478, or a game path under /njs/ such as
+            // /njs/api/game/downloadPGN/<gid> or /njs/game/<gid>.
+            var gid = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name.lowercased() == "gid" }?.value
+            if gid == nil, parts.first?.lowercased() == "njs", let last = parts.last, parts.count > 1 { gid = last }
+            // comp=true asks for the PGN with Stockfish's notes, when chessgames.com has any.
             if let gid, !gid.isEmpty, gid.allSatisfy(\.isNumber),
-               let u = URL(string: "https://www.chessgames.com/nodejs/game/viewGamePGN?text=1&gid=\(gid)") {
+               let u = URL(string: "https://www.chessgames.com/njs/api/game/downloadPGN/\(gid)?comp=true") {
                 return GameLink(kind: .chessgames, fetchURL: u, accept: nil, flipped: false, source: "chessgames.com")
             }
         }

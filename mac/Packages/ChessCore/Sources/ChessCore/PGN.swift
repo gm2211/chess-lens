@@ -209,6 +209,18 @@ public enum PGN {
 
     public static func nagText(_ n: Int) -> String { nagSymbols[n] ?? "$\(n)" }
 
+    /// The `[%eval ...]` command in a comment, White's point of view: `0.23` is pawns, `#3` / `#-2` is mate. An optional `,depth` is ignored.
+    public static func evalAnnotation(_ comment: String) -> Eval? {
+        guard let r = comment.range(of: #"\[%eval\s+([^\]\s,]+)[^\]]*\]"#, options: .regularExpression) else { return nil }
+        let inner = comment[r].dropFirst(6).drop { $0 == " " || $0 == "\t" || $0 == "\n" }.prefix { $0 != "]" && $0 != "," && !$0.isWhitespace }
+        if inner.hasPrefix("#") {
+            guard let m = Int(inner.dropFirst().replacingOccurrences(of: "+", with: "")), m != 0 else { return nil }
+            return .mate(m)
+        }
+        guard let v = Double(inner), v.isFinite else { return nil }
+        return .cp(Int((v * 100).rounded()))
+    }
+
     /// Exports a game as PGN (with variations and comments).
     public static func export(_ g: Game, includeHeaders: Bool = true) -> String {
         var out = ""

@@ -52,6 +52,7 @@ struct BoardView: View {
 
     /// On a notable reviewed move: the opponent's best reply (threat) and the move that was better.
     private var reviewArrows: [BoardArrow] {
+        if app.hidesEvaluation { return [] }
         let review = app.review
         guard review.hasResults, let e = review.entries[app.currentID], e.cls?.isError == true,
               let pid = app.node.parent else { return [] }
@@ -62,6 +63,7 @@ struct BoardView: View {
     }
 
     private var arrows: [BoardArrow] {
+        if app.hidesEvaluation { return [] }
         let extra = reviewArrows
         var out = extra
         if app.engineEnabled, app.engine.linesFEN == app.position.fen, !app.review.running {
@@ -220,7 +222,7 @@ struct BoardView: View {
                     if let down {
                         if let sel = selected, app.position.legalMoves(from: sel).contains(where: { $0.to == down }) {
                             gestureStartedOnTarget = true            // a click on a destination square
-                        } else if let p = app.position.piece(at: down), p.color == app.position.turn {
+                        } else if !app.boardLocked, let p = app.position.piece(at: down), p.color == app.position.turn {
                             selected = down
                             dragFrom = down
                         } else {

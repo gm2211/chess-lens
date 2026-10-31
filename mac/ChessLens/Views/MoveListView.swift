@@ -15,12 +15,28 @@ private enum MoveRow {
     case block(comment: String?, variations: [[MoveToken]])
 }
 
-private func displayComment(_ raw: String?) -> String? {
+func displayComment(_ raw: String?) -> String? {
     guard var s = raw else { return nil }
     // Hide engine/clock commands such as [%clk 0:03:00] and [%eval 0.3].
     while let r = s.range(of: #"\[%[^\]]*\]"#, options: .regularExpression) { s.removeSubrange(r) }
     s = s.trimmingCharacters(in: .whitespacesAndNewlines)
     return s.isEmpty ? nil : s
+}
+
+/// Whether the game carries analysis from its source: comments, side variations or `[%eval]` values.
+func gameHasSourceAnalysis(_ g: Game) -> Bool {
+    g.nodes.contains { n in
+        n.children.count > 1 || displayComment(n.comment) != nil || n.comment.flatMap(PGN.evalAnnotation) != nil
+    }
+}
+
+/// "+0.23", "-1.50", "#3", "#-2" for the small eval chip.
+private func evalChipText(_ e: Eval) -> String {
+    switch e {
+    case .cp(let c): return c == 0 ? "0.00" : String(format: "%+.2f", Double(c) / 100)
+    case .mate(let m): return "#\(m)"
+    case .checkmate(let w): return w == .white ? "1-0" : "0-1"
+    }
 }
 
 /// Inline tokens for a side variation starting with `node` (a child of `parent`).
@@ -56,7 +72,7 @@ private func variationTokens(_ g: Game, parent: Int, node: Int) -> [MoveToken] {
     return out
 }
 
-private func buildRows(_ g: Game) -> [MoveRow] {
+private func buildRows(_ g: Game, showSource: Bool) -> [MoveRow] {
     var rows: [MoveRow] = []
     var pending: (number: Int, white: Int?, black: Int?)?
 
@@ -65,7 +81,7 @@ private func buildRows(_ g: Game) -> [MoveRow] {
         pending = nil
     }
 
-    if let c = displayComment(g.nodes[0].comment) { rows.append(.block(comment: c, variations: [])) }
+    if showSource, let c = displayComment(g.nodes[0].comment) { rows.append(.block(comment: c, variations: [])) }
     var cur = 0
     while let next = g.nodes[cur].children.first {
         let pos = g.nodes[cur].position
@@ -80,8 +96,8 @@ private func buildRows(_ g: Game) -> [MoveRow] {
             pending = (pos.fullmove, nil, next)
             flush()
         }
-        let comment = displayComment(g.nodes[next].comment)
-        let alts = g.nodes[cur].children.dropFirst().map { variationTokens(g, parent: cur, node: $0) }
+        let comment = showSource ? displayComment(g.nodes[next].comment) : nil
+        let alts = !showSource ? [] : g.nodes[cur].children.dropFirst().map { variationTokens(g, parent: cur, node: $0) }
         if comment != nil || !alts.isEmpty {
             flush()
             rows.append(.block(comment: comment, variations: alts))
@@ -96,7 +112,7 @@ struct MoveListView: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        let rows = buildRows(app.game)
+        let rows = buildRows(app.game, showSource: app.showSourceAnalysis)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -198,13 +214,19 @@ private struct MoveButton: View {
     @ViewBuilder private var content: some View {
         let node = app.game.nodes[id]
         let current = id == app.currentID
-        let cls = app.review.entries[id]?.cls
+        let cls = app.hidesEvaluation ? nil : app.review.entries[id]?.cls
+        let eval = app.showSourceAnalysis && !app.hidesEvaluation ? node.comment.flatMap(PGN.evalAnnotation) : nil
+        let nags = app.showSourceAnalysis ? node.nags : []
         Button { app.goto(id) } label: {
             HStack(spacing: 0) {
                 Text(node.san)
                 if let cls { Text(cls.rawValue).foregroundStyle(current ? Theme.accentInk : Theme.color(for: cls)).fontWeight(.bold) }
-                else if !node.nags.isEmpty {
-                    Text(node.nags.map { PGN.nagText($0) }.joined()).foregroundStyle(current ? Theme.accentInk : Theme.ink2)
+                else if !nags.isEmpty {
+                    Text(nags.map { PGN.nagText($0) }.joined()).foregroundStyle(current ? Theme.accentInk : Theme.ink2)
+                }
+                if let eval {
+                    Text(evalChipText(eval)).font(.mono(11, weight: .regular))
+                        .foregroundStyle(current ? Theme.accentInk.opacity(0.75) : Theme.ink3).padding(.leading, 6)
                 }
             }
             .font(.mono(depth > 0 ? 12.5 : 14, weight: .medium))
@@ -220,6 +242,8 @@ private struct MoveButton: View {
             if let p = node.parent, app.game.nodes[p].children.first != id {
                 Button("Make Main Line") { app.promote(id) }
             }
+            Button("Continue Against Engine From Here") { app.requestPlay(from: id) }
+            Divider()
             Button("Delete From Here", role: .destructive) { app.deleteFrom(id) }
         }
         .accessibilityLabel(node.san)

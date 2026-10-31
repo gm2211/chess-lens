@@ -11,6 +11,8 @@ enum SearchLimit: Sendable, Equatable {
     case depth(Int)
     /// `go depth N movetime T`: whichever comes first (the AI's engine tool).
     case depthTime(depth: Int, ms: Int)
+    /// `go movetime N` (milliseconds): used when playing against the engine.
+    case moveTime(Int)
 }
 
 enum EngineEvent: Sendable {
@@ -61,6 +63,7 @@ actor UCIEngine {
     private var hash: Int
     private var appliedThreads = 0
     private var appliedHash = 0
+    private var pendingOptions: [(name: String, value: String)] = []
     private var stopWaiters: [CheckedContinuation<Void, Never>] = []
     private var tokenWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
@@ -74,6 +77,11 @@ actor UCIEngine {
     func setOptions(threads: Int, hash: Int) {
         self.threads = threads
         self.hash = hash
+    }
+
+    /// Arbitrary UCI options (e.g. `UCI_Elo`), stored now and sent before the next search.
+    func setUCIOptions(_ options: [(name: String, value: String)]) {
+        pendingOptions.append(contentsOf: options)
     }
 
     static var defaultExecutableURL: URL? {
@@ -219,6 +227,8 @@ actor UCIEngine {
     private func sendPendingOptions() {
         if threads != appliedThreads { send("setoption name Threads value \(threads)"); appliedThreads = threads }
         if hash != appliedHash { send("setoption name Hash value \(hash)"); appliedHash = hash }
+        for o in pendingOptions { send("setoption name \(o.name) value \(o.value)") }
+        pendingOptions = []
     }
 
     // MARK: Search
@@ -251,7 +261,7 @@ actor UCIEngine {
         await stopActive()
         guard mine == ticket else { return AsyncStream { $0.finish() } }   // superseded while waiting
         if dead { throw EngineError.terminated }
-        if threads != appliedThreads || hash != appliedHash {
+        if threads != appliedThreads || hash != appliedHash || !pendingOptions.isEmpty {
             sendPendingOptions()
             send("isready")
             await waitFor("readyok")
@@ -274,6 +284,7 @@ actor UCIEngine {
         case .infinite: send("go infinite")
         case .depth(let d): send("go depth \(d)")
         case .depthTime(let d, let ms): send("go depth \(d) movetime \(ms)")
+        case .moveTime(let ms): send("go movetime \(ms)")
         }
         return stream
     }
