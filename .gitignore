@@ -7,3 +7,7 @@ vendor/
 mac/Tools/TrainBoardModel/dataset/
 .build/
 *.xcuserstate
+*.tfstate
+*.tfstate.backup
+infra/.terraform/
+infra/tfplan
