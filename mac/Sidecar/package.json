@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Chess Lens LLM sidecar: newline-delimited JSON over stdio, built on the vendored @byos/chatgpt-local.",
+  "description": "Chess Lens LLM sidecar: newline-delimited JSON over stdio, built on the vendored @byos packages (chatgpt-local, claude-local, providers).",
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test test/"

@@ -30,12 +30,7 @@ struct ChessLensApp: App {
                 EngineSettingsForm(settings: model.engine.settings)
                     .padding(20).frame(width: 380)
                     .tabItem { Label("Engine", systemImage: "cpu") }
-                VStack(alignment: .leading, spacing: 12) {
-                    AIAccountView()
-                    Text("Commentary uses your own ChatGPT plan via Sign in with ChatGPT; tokens stay in the Keychain.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.ink3)
-                }
-                .padding(20).frame(width: 380)
+                AIProvidersView()
                 .tabItem { Label("AI", systemImage: "sparkles") }
             }
         }

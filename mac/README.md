@@ -21,27 +21,41 @@ the nets to `Contents/Resources/Networks`, signs the helper with sandbox + inher
 Stockfish's GPLv3 text as `Stockfish-Copying.txt`. The build fails with a pointer to the script if `vendor/bin/stockfish` is missing.
 (The nets are shipped as files because the nets embedded in the binary did not load in this build.)
 
-## AI commentary sidecar
+## AI commentary
 
-`Sidecar/` is a small Node program that talks to ChatGPT through the vendored `@byos/chatgpt-local` (official Sign in
-with ChatGPT, tokens in the macOS Keychain, direct HTTPS). The app launches it as a child process and speaks
-newline-delimited JSON on stdin/stdout (`status`, `signIn`, `signOut`, `complete`; protocol in `Sidecar/src/server.mjs`).
-Tokens never leave the sidecar; Swift sees the account label, model list and generated text.
+Settings > AI (`ChessLens/LLM/AIProvidersView.swift`, about 340 pt wide) picks the provider that explains moves. Supported:
+
+| Provider | Sign-in | Notes |
+| --- | --- | --- |
+| ChatGPT | OAuth (Sign in with ChatGPT) | Plus/Pro plan, via `@byos/chatgpt-local` |
+| Claude | OAuth (Claude Pro/Max subscription), loopback + paste-code fallback | Claude subscription sign-in is supported, via `@byos/claude-local` |
+| Claude API | pasted key | `claude()` from `@byos/providers` |
+| OpenRouter, Groq, Hugging Face | pasted key | `@byos/providers` adapters |
+| Grok | SuperGrok device-code sign-in or pasted key | device flow ported from Skim |
+| Apple Intelligence | none | on-device FoundationModels, macOS 26+, no sidecar; shows why when unavailable |
+
+Model lists come live from each provider. Keys and tokens live only in the Keychain and only the sidecar touches them.
+
+`Sidecar/` is a small Node program that serves all non-Apple providers. The app launches it as a child process and speaks
+newline-delimited JSON on stdin/stdout; every command takes a `provider` (`providers`, `status`, `signIn` with optional
+`apiKey`/`mode`, `submitCode`, `signOut`, `complete`; protocol in `Sidecar/src/server.mjs`, adapters in `Sidecar/src/providers.mjs`).
+Swift sees account labels, model ids and generated text. Key providers are validated with a model-list call before the key is stored.
 
 ```sh
 mac/scripts/build-sidecar.sh          # fetches Node 24.22.1 (sha256 + Node.js Foundation signature checked), npm ci, tests, bundles to mac/vendor/sidecar
-mac/scripts/check-sidecar-sandbox.sh  # optional: drives the real LLMSidecar.swift under the App Sandbox (no UI)
+mac/scripts/check-sidecar-sandbox.sh  # optional: drives the real LLMSidecar.swift under the App Sandbox (no UI, no real sign-in)
 ```
 
 The "Embed LLM sidecar" build phase (`scripts/embed-sidecar.sh`) copies `Helpers/sidecar-node` (signed with
 `Resources/Sidecar.entitlements`: sandbox + inherit + JIT + no library validation), `Helpers/sidecar-keyring.node` and
-`Resources/sidecar.mjs`. The app gains `network.client` (OpenAI) and `network.server` (the loopback OAuth callback;
-without it the listener cannot bind). Swift API: `ChessLens/LLM/LLMSidecar.swift` (`LLMSidecar.shared`: `status()`,
-`signIn(openURL:)`, `signOut()`, `complete(model:system:prompt:maxTokens:) -> AsyncThrowingStream<String, Error>`) and
-`ChessLens/LLM/AIAccountView.swift` (drop-in account/model view; chosen model in `UserDefaults` key `ai.model`).
-Update the vendored kit with `scripts/vendor.mjs` from a BYOS checkout (`--packages chatgpt-local --out mac/Sidecar/byos`);
-never edit `Sidecar/byos`. Limits: the kit returns the finished text, so `complete` replays it as chunks (not live tokens),
-and `maxTokens` is only a prompt hint.
+`Resources/sidecar.mjs`. The app gains `network.client` and `network.server` (the loopback OAuth callbacks, e.g. Claude's
+`localhost:54134`; without it the listener cannot bind). Swift API: `ChessLens/LLM/AIHub.swift` (`AIHub.shared`: `selected`,
+`model`, `states`, `refresh(_:)`, `signIn(_:apiKey:paste:)`, `submitCode(_:code:)`, `signOut(_:)`,
+`complete(system:prompt:maxTokens:) -> AsyncThrowingStream<String, Error>`), over `LLMSidecar.swift` (the stdio client) and
+`AppleIntelligence.swift`. The selected provider and per-provider model are in `UserDefaults` (`ai.provider`, `ai.model.<id>`).
+Update the vendored kit with `scripts/vendor.mjs` from a BYOS checkout (`--packages chatgpt-local,claude-local,providers --out mac/Sidecar/byos
+--revision mac/Sidecar/byos/BYOS_REVISION`); never edit `Sidecar/byos`. Limits: ChatGPT returns the finished text, so its `complete`
+replays it as chunks (the other providers stream live), and `maxTokens` is only a prompt hint except for Claude.
 
 ## Layout
 

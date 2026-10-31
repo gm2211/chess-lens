@@ -8,13 +8,29 @@ struct LLMModel: Sendable, Equatable, Hashable, Identifiable {
     let name: String
 }
 
+/// One provider's status from the sidecar.
 struct LLMStatus: Sendable, Equatable {
-    var signedIn = false
-    /// Account label (usually an email). Never a token.
+    /// Usable now: signed in, or a key is stored and the provider has not rejected it.
+    var ready = false
+    /// Account label (usually an email). Never a token or key.
     var account: String?
     var models: [LLMModel] = []
-    /// Set when signed in but the model list could not be fetched.
-    var modelsError: String?
+    /// Sidecar error code when the model list could not be fetched ("reconnect-required" means the credential was rejected).
+    var error: String?
+    /// A sign-in is waiting for a pasted `CODE#STATE` (Claude paste fallback).
+    var awaitingCode = false
+}
+
+/// Static description of a sidecar provider, from the `providers` command.
+struct LLMProviderInfo: Sendable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    /// "oauth", "apiKey" or "both".
+    let authKind: String
+    let setupText: String
+    let setupURL: String
+    /// "loopback", "loopback+paste", "device" or "" (key only).
+    let flow: String
 }
 
 enum LLMError: Error, LocalizedError, Equatable {
@@ -22,7 +38,7 @@ enum LLMError: Error, LocalizedError, Equatable {
     case launchFailed(String)
     case terminated
     case canceled
-    /// An error reported by the sidecar. `code` is one of the @byos/chatgpt-local codes
+    /// An error reported by the sidecar. `code` is a sidecar error code
     /// (e.g. "reconnect-required", "consent-required", "busy", "storage-unavailable", "unavailable").
     case server(code: String, message: String)
 
@@ -49,7 +65,7 @@ actor LLMSidecar {
     static let shared = LLMSidecar()
 
     private enum Event: Sendable {
-        case url(URL)
+        case url(URL, userCode: String?)
         case delta(String)
         case done([String: Sendable])
         case failed(LLMError)
@@ -75,20 +91,35 @@ actor LLMSidecar {
 
     // MARK: API
 
-    func status() async throws -> LLMStatus {
-        let r = try await request(["type": "status"])
-        return Self.parseStatus(r)
+    /// Metadata for every provider the sidecar offers.
+    func providers() async throws -> [LLMProviderInfo] {
+        let r = try await request(["type": "providers"])
+        return (r["providers"] as? [[String: String]] ?? []).compactMap { p in
+            guard let id = p["id"], let name = p["name"] else { return nil }
+            return LLMProviderInfo(id: id, name: name, authKind: p["authKind"] ?? "apiKey", setupText: p["setupText"] ?? "",
+                                   setupURL: p["setupURL"] ?? "", flow: p["flow"] ?? "")
+        }
     }
 
-    /// Starts the official Sign in with ChatGPT flow. `openURL` receives the loopback authorization URL as soon
-    /// as it exists (open it with NSWorkspace); the call returns once the user finishes (up to ~5 minutes).
-    func signIn(openURL: @escaping @Sendable (URL) -> Void) async throws -> LLMStatus {
+    func status(provider: String) async throws -> LLMStatus {
+        Self.parseStatus(try await request(["type": "status", "provider": provider]))
+    }
+
+    /// OAuth providers: `onURL` receives the authorization URL (open it with NSWorkspace) and, for device-code
+    /// flows, the code to enter; the call returns once the user finishes (up to ~5 minutes) or, for Claude, as soon as
+    /// the paste fallback is waiting for a code (`awaitingCode`). Key providers: pass `apiKey`; the sidecar validates it
+    /// against the provider and stores it in the Keychain. `paste` skips Claude's loopback and goes straight to the code flow.
+    func signIn(provider: String, apiKey: String? = nil, paste: Bool = false,
+                onURL: @escaping @Sendable (URL, String?) -> Void = { _, _ in }) async throws -> LLMStatus {
         let id = newID()
-        let events = try send(["type": "signIn"], id: id)
+        var body: [String: Any] = ["type": "signIn", "provider": provider]
+        if let apiKey { body["apiKey"] = apiKey }
+        if paste { body["mode"] = "paste" }
+        let events = try send(body, id: id)
         return try await withTaskCancellationHandler {
             for await e in events {
                 switch e {
-                case .url(let u): openURL(u)
+                case .url(let u, let code): onURL(u, code)
                 case .done(let r): return Self.parseStatus(r)
                 case .failed(let err): throw err
                 case .delta: break
@@ -98,8 +129,13 @@ actor LLMSidecar {
         } onCancel: { Task { await self.cancel(id) } }
     }
 
-    func signOut() async throws {
-        _ = try await request(["type": "signOut"])
+    /// Finishes a paste-code sign-in (the `CODE#STATE` string the console page shows).
+    func submitCode(provider: String, code: String) async throws -> LLMStatus {
+        Self.parseStatus(try await request(["type": "submitCode", "provider": provider, "code": code]))
+    }
+
+    func signOut(provider: String) async throws {
+        _ = try await request(["type": "signOut", "provider": provider])
     }
 
     /// Diagnostic: true when the sidecar can write, read and delete a throwaway Keychain item under the current sandbox.
@@ -108,12 +144,12 @@ actor LLMSidecar {
     }
 
     /// Streams the model's answer as text chunks. Cancelling the consuming task (or breaking out of the loop)
-    /// cancels the request. `model` nil uses the first model the account offers.
-    nonisolated func complete(model: String? = nil, system: String, prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<String, Error> {
+    /// cancels the request. `model` nil uses the first model the provider offers.
+    nonisolated func complete(provider: String, model: String? = nil, system: String, prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var body: [String: Any] = ["type": "complete", "system": system, "prompt": prompt]
+                    var body: [String: Any] = ["type": "complete", "provider": provider, "system": system, "prompt": prompt]
                     if let model { body["model"] = model }
                     if let maxTokens { body["maxTokens"] = maxTokens }
                     try await self.stream(body, into: continuation)
@@ -256,7 +292,7 @@ actor LLMSidecar {
               let id = obj["id"] as? String ?? (obj["id"] as? Int).map(String.init),
               let c = pending[id] else { return }
         if let url = obj["url"] as? String, let u = URL(string: url) {
-            c.yield(.url(u))
+            c.yield(.url(u, userCode: obj["userCode"] as? String))
         } else if let d = obj["delta"] as? String {
             c.yield(.delta(d))
         } else if let e = obj["error"] as? [String: Any] {
@@ -287,7 +323,7 @@ actor LLMSidecar {
         let models = (r["models"] as? [[String: String]] ?? []).compactMap { m in
             m["id"].map { LLMModel(id: $0, name: m["name"] ?? $0) }
         }
-        return LLMStatus(signedIn: r["signedIn"] as? Bool ?? false, account: r["account"] as? String,
-                         models: models, modelsError: r["modelsError"] as? String)
+        return LLMStatus(ready: r["ready"] as? Bool ?? false, account: r["account"] as? String, models: models,
+                         error: r["error"] as? String, awaitingCode: r["awaitingCode"] as? Bool ?? false)
     }
 }
