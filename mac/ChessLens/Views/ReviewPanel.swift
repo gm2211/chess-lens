@@ -29,10 +29,10 @@ struct ReviewPanel: View {
                     .help("Review the game with the engine")
                     .disabled(review.running || !app.engine.isAvailable)
                 Spacer(minLength: 8)
-                // TODO(ai-hub): wire real provider name, readiness and popover.
-                AIProviderChip(name: "AI", ready: false) {
-                    Text("AI providers").font(.system(size: 13)).padding(16)
+                AIProviderChip(name: AIHub.shared.selected.displayName, ready: AIHub.shared.isReady) {
+                    AIProvidersView().padding(12)
                 }
+                .task { await AIHub.shared.refresh(AIHub.shared.selected) }
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
 
