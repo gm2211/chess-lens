@@ -243,6 +243,7 @@ private struct MovesPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(app.title).font(.display(21)).foregroundStyle(Theme.ink).lineLimit(2)
                 let sub = [app.game.header("Date").flatMap { $0.contains("?") ? nil : $0 }, PGN.meaningful(app.game.header("Event")).flatMap { $0 == app.title ? nil : $0 }, app.game.result == "*" ? nil : app.game.result]
@@ -250,6 +251,14 @@ private struct MovesPanel: View {
                 if !sub.isEmpty { Text(sub).font(.system(size: 13)).foregroundStyle(Theme.ink3) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if gameHasSourceAnalysis(app.game) {
+                @Bindable var app = app
+                Toggle(isOn: $app.showSourceAnalysis) { Image(systemName: "text.bubble") }
+                    .toggleStyle(.button).buttonStyle(QuietButtonStyle())
+                    .help(app.showSourceAnalysis ? "Hide the source's comments, variations and evals" : "Show the source's comments, variations and evals")
+                    .accessibilityLabel("Show source analysis")
+            }
+            }
             .padding(.horizontal, 14).padding(.vertical, 12)
             Divider()
             MoveListView()

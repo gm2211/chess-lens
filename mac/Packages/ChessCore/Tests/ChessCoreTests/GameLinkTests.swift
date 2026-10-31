@@ -7,7 +7,7 @@ final class GameLinkTests: XCTestCase {
     func testLichessGame() {
         let l = link("https://lichess.org/abcd1234")
         XCTAssertEqual(l?.kind, .lichessGame)
-        XCTAssertEqual(l?.fetchURL.absoluteString, "https://lichess.org/game/export/abcd1234")
+        XCTAssertEqual(l?.fetchURL.absoluteString, "https://lichess.org/game/export/abcd1234?evals=true&literate=true&clocks=false")
         XCTAssertEqual(l?.accept, "application/x-chess-pgn")
         XCTAssertEqual(l?.flipped, false)
     }
@@ -15,7 +15,7 @@ final class GameLinkTests: XCTestCase {
     func testLichessTwelveCharIDAndBlackSide() {
         let l = link("https://lichess.org/abcd1234wxyz/black#34")
         XCTAssertEqual(l?.kind, .lichessGame)
-        XCTAssertEqual(l?.fetchURL.absoluteString, "https://lichess.org/game/export/abcd1234")
+        XCTAssertEqual(l?.fetchURL.absoluteString, "https://lichess.org/game/export/abcd1234?evals=true&literate=true&clocks=false")
         XCTAssertEqual(l?.flipped, true)
         XCTAssertEqual(link("https://en.lichess.org/abcd1234/white")?.flipped, false)
     }
@@ -23,7 +23,7 @@ final class GameLinkTests: XCTestCase {
     func testLichessStudyChapter() {
         let l = link("https://lichess.org/study/AbCdEf12/Zy9xWv87")
         XCTAssertEqual(l?.kind, .lichessStudy)
-        XCTAssertEqual(l?.fetchURL.absoluteString, "https://lichess.org/api/study/AbCdEf12/Zy9xWv87.pgn")
+        XCTAssertEqual(l?.fetchURL.absoluteString, "https://lichess.org/api/study/AbCdEf12/Zy9xWv87.pgn?comments=true&variations=true&clocks=false")
     }
 
     func testLichessNonGamePagesAreGeneric() {
@@ -71,8 +71,18 @@ final class GameLinkTests: XCTestCase {
     func testChessgames() {
         let l = link("https://www.chessgames.com/perl/chessgame?gid=1011478")
         XCTAssertEqual(l?.kind, .chessgames)
-        XCTAssertEqual(l?.fetchURL.absoluteString, "https://www.chessgames.com/nodejs/game/viewGamePGN?text=1&gid=1011478")
+        XCTAssertEqual(l?.fetchURL.absoluteString, "https://www.chessgames.com/njs/api/game/downloadPGN/1011478?comp=true")
         XCTAssertEqual(l?.source, "chessgames.com")
         XCTAssertEqual(link("https://www.chessgames.com/perl/chessplayer?pid=15940")?.kind, .generic)
+    }
+
+    func testChessgamesNjsPaths() {
+        let want = "https://www.chessgames.com/njs/api/game/downloadPGN/1233404?comp=true"
+        for u in [want, "https://www.chessgames.com/njs/api/game/downloadPGN/1233404",
+                  "https://www.chessgames.com/njs/game/1233404", "https://www.chessgames.com/njs/game/1233404/"] {
+            XCTAssertEqual(link(u)?.kind, .chessgames, u)
+            XCTAssertEqual(link(u)?.fetchURL.absoluteString, want, u)
+        }
+        XCTAssertEqual(link("https://www.chessgames.com/njs/player/abc")?.kind, .generic)
     }
 }
