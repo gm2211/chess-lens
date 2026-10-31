@@ -129,8 +129,10 @@ enum LinkFetcher {
                 throw Failure(message: "No chess game found at that link.")
             }
             return .text(text)
-        case .lichessGame, .lichessStudy:
-            guard let text = String(data: data, encoding: .utf8) else { throw Failure(message: "Couldn't read that lichess game.") }
+        case .lichessGame, .lichessStudy, .chessgames:
+            guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+                throw Failure(message: "Couldn't read that \(link.source) game.")
+            }
             return .text(text)
         }
     }
@@ -141,6 +143,8 @@ enum LinkFetcher {
             switch link.kind {
             case .lichessGame, .lichessStudy:
                 throw Failure(message: http.statusCode == 404 ? "Lichess has no game at that link." : "Couldn't fetch that lichess game.")
+            case .chessgames:
+                throw Failure(message: "Couldn't fetch that chessgames.com game.")
             case .chessCom:
                 throw Failure(message: "Couldn't read that chess.com game.")
             case .generic:

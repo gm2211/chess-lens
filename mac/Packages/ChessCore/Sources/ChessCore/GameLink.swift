@@ -5,6 +5,7 @@ public struct GameLink: Equatable, Sendable {
     public enum Kind: Equatable, Sendable {
         case lichessGame, lichessStudy
         case chessCom(daily: Bool)
+        case chessgames
         case generic
     }
 
@@ -22,7 +23,7 @@ public struct GameLink: Equatable, Sendable {
         "analysis", "training", "practice", "tutorial", "settings", "tv", "games", "streamer",
     ]
 
-    /// Recognises lichess, chess.com and other http(s) links. Returns nil for anything that is not a web link.
+    /// Recognises lichess, chess.com, chessgames.com and other http(s) links. Returns nil for anything that is not a web link.
     public static func parse(_ url: URL) -> GameLink? {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
               let host = url.host?.lowercased(), !host.isEmpty else { return nil }
@@ -43,16 +44,27 @@ public struct GameLink: Equatable, Sendable {
         }
 
         if host == "chess.com" || host.hasSuffix(".chess.com") {
-            // /game/live/<id>, /game/daily/<id>, /analysis/game/live/<id>, /analysis/game/daily/<id>
-            var p = parts[...]
-            if p.first == "analysis" { p = p.dropFirst() }
-            if p.count >= 3, p[p.startIndex] == "game", ["live", "daily"].contains(p[p.startIndex + 1]) {
-                let id = p[p.startIndex + 2]
-                let daily = p[p.startIndex + 1] == "daily"
+            // /game/live/<id>, /game/daily/<id>, /analysis/game/live/<id>, the older /live/game/<id> and /daily/game/<id>,
+            // and the bare /game/<id> (a live game).
+            var p = Array(parts.drop { $0 == "analysis" })
+            if p.count >= 3, ["live", "daily"].contains(p[0]), p[1] == "game" { p.swapAt(0, 1) }
+            if p.count == 2, p[0] == "game" { p.insert("live", at: 1) }
+            if p.count >= 3, p[0] == "game", ["live", "daily"].contains(p[1]) {
+                let id = p[2]
+                let daily = p[1] == "daily"
                 if !id.isEmpty, id.allSatisfy(\.isNumber),
                    let u = URL(string: "https://www.chess.com/callback/\(daily ? "daily" : "live")/game/\(id)") {
                     return GameLink(kind: .chessCom(daily: daily), fetchURL: u, accept: "application/json", flipped: false, source: "chess.com")
                 }
+            }
+        }
+
+        if host == "chessgames.com" || host.hasSuffix(".chessgames.com") {
+            // Any page carrying ?gid=<n>, e.g. /perl/chessgame?gid=1011478.
+            let gid = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name.lowercased() == "gid" }?.value
+            if let gid, !gid.isEmpty, gid.allSatisfy(\.isNumber),
+               let u = URL(string: "https://www.chessgames.com/nodejs/game/viewGamePGN?text=1&gid=\(gid)") {
+                return GameLink(kind: .chessgames, fetchURL: u, accept: nil, flipped: false, source: "chessgames.com")
             }
         }
 
