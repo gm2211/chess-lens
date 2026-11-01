@@ -55,6 +55,10 @@ struct AppCommands: Commands {
             Button("Paste Game or Position") { model.handlePasteboard() }.keyboardShortcut("v", modifiers: [.command, .shift])
             Button("Copy FEN") { model.copyFEN() }.keyboardShortcut("c", modifiers: [.command, .shift])
             Button("Copy PGN") { model.copyPGN() }.keyboardShortcut("c", modifiers: [.command, .option])
+            Divider()
+            Button("Clear Explored Lines") { model.requestClearExploredLines() }
+                .keyboardShortcut(.delete, modifiers: [.command, .shift])
+                .disabled(model.exploredCount == 0)
         }
         CommandMenu("Board") {
             Button(model.playSession == nil ? "Continue Against Engine\u{2026}" : "Stop Playing Against Engine") { model.togglePlay() }

@@ -60,6 +60,7 @@ final class AppModel {
     var pendingImport: PendingImport?                // a drop waiting for confirmation
     @ObservationIgnored var pendingTask: Task<Void, Never>?
     private(set) var toastText: String?
+    var confirmClearExplored = false                 // the alert before clearing a lot of moves
     var playSession: PlaySession?                    // "Continue against engine", see AppModel+Play
     var showPlaySetup = false
 
@@ -205,7 +206,7 @@ final class AppModel {
     func play(_ move: Move) {
         if let s = playSession, !s.acceptsInput { return }
         do {
-            let id = try game.addMove(move, after: currentID)
+            let id = try game.addMove(move, after: currentID, explored: true)
             currentID = id
             playSession?.noteMove(to: id)
             didMove()
@@ -264,6 +265,40 @@ final class AppModel {
         lessonFocus = nil; lessonPlayer = nil
         currentID = cur
         didMove()
+    }
+
+    // MARK: Explored lines
+
+    /// How many moves "Clear Explored Lines" would remove.
+    var exploredCount: Int { game.exploredCount }
+
+    /// Asks first when a lot of moves would go, otherwise clears right away.
+    func requestClearExploredLines() {
+        let n = exploredCount
+        guard n > 0 else { return }
+        if n > 10 { confirmClearExplored = true } else { clearExploredLines() }
+    }
+
+    /// Removes every move the user explored (never the imported game or its variations). Stays on the current
+    /// move if it survives, otherwise the nearest surviving ancestor; ids change, so everything keyed by them resets.
+    func clearExploredLines() {
+        guard game.exploredCount > 0 else { return }
+        endPlay()
+        let ancestors = game.path(to: currentID)
+        let tipMoves = game.moves(to: lineTip)
+        let (removed, remap) = game.clearExplored()
+        guard removed > 0 else { return }
+        let survivor = ancestors.reversed().first { remap[$0] != nil } ?? 0
+        let newCurrent = remap[survivor] ?? 0
+        let keptTip = game.locate(moves: tipMoves)
+        lineTip = game.moves(to: keptTip).count == tipMoves.count ? keptTip : (game.mainline().last ?? 0)
+        layoutCache = [:]
+        review.reset()
+        ask.reset()
+        lessonFocus = nil; lessonPlayer = nil
+        currentID = newCurrent
+        didMove()
+        showToast("Cleared \(removed) explored move\(removed == 1 ? "" : "s")")
     }
 
     // MARK: Loading
@@ -432,6 +467,7 @@ final class AppModel {
         var path: [Int]       // child index chosen at each step from the root
         var flipped: Bool
         var tip: [Int]? = nil  // child indices to the shown line's end (absent in older saves)
+        var explored: String? = nil  // `Game.exploredSignature` (absent in older saves: nothing counts as explored)
     }
 
     private static let saveKey = "lastGame.v1"
@@ -451,7 +487,8 @@ final class AppModel {
             for (a, b) in zip(tipPath, tipPath.dropFirst()) {
                 tipChoices.append(self.game.nodes[a].children.firstIndex(of: b) ?? 0)
             }
-            let saved = Saved(pgn: PGN.export(self.game), path: choices, flipped: self.flipped, tip: tipChoices)
+            let saved = Saved(pgn: PGN.export(self.game), path: choices, flipped: self.flipped, tip: tipChoices,
+                          explored: self.game.exploredSignature)
             if let data = try? JSONEncoder().encode(saved) { UserDefaults.standard.set(data, forKey: Self.saveKey) }
         }
     }
@@ -460,7 +497,8 @@ final class AppModel {
         guard let data = UserDefaults.standard.data(forKey: saveKey),
               let saved = try? JSONDecoder().decode(Saved.self, from: data),
               let parsed = PGN.parse(saved.pgn).first else { return nil }
-        let g = parsed.game
+        var g = parsed.game
+        if let sig = saved.explored { g.applyExploredSignature(sig) }
         func follow(_ choices: [Int]) -> Int {
             var cur = 0
             for c in choices {
