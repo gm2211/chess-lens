@@ -19,11 +19,12 @@ final class SnapshotAccumulatorTests: XCTestCase {
         XCTAssertEqual(acc.accumulate(line(depth: 2, pv: 3, cp: 11))?.depth, 2)
     }
 
-    func testIgnoresSkippedDepthForPrimary() {
+    func testForwardJumpStartsNewDepthAndRepeatsAreIgnored() {
         var acc = SnapshotAccumulator(expectedPVs: 1)
         XCTAssertNotNil(acc.accumulate(line(depth: 1, pv: 1, cp: 10)))
-        XCTAssertNil(acc.accumulate(line(depth: 3, pv: 1, cp: 10)))
-        XCTAssertEqual(acc.accumulate(line(depth: 2, pv: 1, cp: 12))?.depth, 2)
+        XCTAssertEqual(acc.accumulate(line(depth: 3, pv: 1, cp: 10))?.depth, 3)
+        XCTAssertNil(acc.accumulate(line(depth: 3, pv: 1, cp: 11)))
+        XCTAssertNil(acc.accumulate(line(depth: 2, pv: 1, cp: 12)))
     }
 
     func testIgnoresPrimaryBoundLines() {

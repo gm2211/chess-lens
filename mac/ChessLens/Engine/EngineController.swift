@@ -48,7 +48,7 @@ final class EngineController {
         var nodes: Int
         var nps: Int?
     }
-    private struct Pending { var fen: String; var lines: [EngineLine]; var depth: Int; var nodes: Int; var nps: Int? }
+    private struct Pending { var fen: String; var key: String; var lines: [EngineLine]; var depth: Int; var nodes: Int; var nps: Int? }
     private var cache: [String: CachedEval] = [:]
     private var cacheOrder: [String] = []          // least recently used first
     private let cacheLimit = 500
@@ -57,6 +57,7 @@ final class EngineController {
     private var scheduledGen = -1
     private var lastPublish = ContinuousClock.now
     private var searchStart = ContinuousClock.now
+    private var shownKey: String?
     private var shownNodes = 0                     // strength of what `lines` currently shows
     private var shownDepth = 0
     private var shownLineCount = 0
@@ -95,14 +96,14 @@ final class EngineController {
         if position.legalMoves().isEmpty { finish(fen: fen, engine: engine); return }
         flushTask?.cancel(); pending = nil
         let cfg = settings.config
-        let key = Self.cacheKey(fen, cfg.lines)
-        if linesFEN != fen {
+        let key = Self.cacheKey(fen, history, cfg.lines)
+        if shownKey != key || linesFEN != fen {
             if let hit = touchCache(key) {
                 // Back at a known position: show the stored result straight away.
-                lines = hit.lines; depth = hit.depth; linesFEN = fen
+                lines = hit.lines; depth = hit.depth; linesFEN = fen; shownKey = key
                 shownNodes = hit.nodes; shownDepth = hit.depth; shownLineCount = hit.lines.count
             } else {
-                lines = []; depth = 0; shownNodes = 0; shownDepth = 0; shownLineCount = 0
+                lines = []; depth = 0; shownKey = nil; shownNodes = 0; shownDepth = 0; shownLineCount = 0
             }
         }
         // Already searched at least as deep as the budget with the full line count: nothing more to learn.
@@ -121,6 +122,7 @@ final class EngineController {
     }
 
     private func runLive(engine: UCIEngine, position: Position, fen: String, history: (rootFEN: String, moves: [String])?, gen: Int) async {
+        let key = Self.cacheKey(fen, history, settings.config.lines)
         if status == .idle { status = .starting }
         let cfg = settings.config
         do {
@@ -144,7 +146,7 @@ final class EngineController {
                                               text: position.numberedLine(fromUCI: pv.pv, maxPlies: 14), sanMoves: sans))
                     }
                     guard !out.isEmpty else { continue }
-                    pending = Pending(fen: fen, lines: out, depth: snap.depth, nodes: snap.nodes, nps: snap.nps)
+                    pending = Pending(fen: fen, key: key, lines: out, depth: snap.depth, nodes: snap.nodes, nps: snap.nps)
                     schedulePublish(gen: gen, cfg: cfg)
                 case .finished:
                     flushPending(cfg: cfg, force: true)
@@ -171,11 +173,13 @@ final class EngineController {
 
     private func finish(fen: String, engine: UCIEngine) {
         flushTask?.cancel(); pending = nil
-        lines = []; linesFEN = fen; depth = 0; nps = 0; searching = false; shownNodes = 0; shownDepth = 0; shownLineCount = 0
+        lines = []; linesFEN = fen; depth = 0; nps = 0; searching = false; shownKey = nil; shownNodes = 0; shownDepth = 0; shownLineCount = 0
         liveTask = Task { await engine.stop() }
     }
 
-    private static func cacheKey(_ fen: String, _ lines: Int) -> String { "\(fen)|\(lines)" }
+    private static func cacheKey(_ fen: String, _ history: (rootFEN: String, moves: [String])?, _ lines: Int) -> String {
+        "\(history?.rootFEN ?? fen)|\((history?.moves ?? []).joined(separator: " "))|\(lines)"
+    }
 
     private func touchCache(_ key: String) -> CachedEval? {
         guard let hit = cache[key] else { return nil }
@@ -221,7 +225,8 @@ final class EngineController {
         if let n = p.nps { nps = n }
         shownNodes = p.nodes; shownDepth = p.depth; shownLineCount = p.lines.count
         lastPublish = .now
-        store(Self.cacheKey(p.fen, cfg.lines), CachedEval(lines: p.lines, depth: p.depth, nodes: p.nodes, nps: p.nps))
+        shownKey = p.key
+        store(p.key, CachedEval(lines: p.lines, depth: p.depth, nodes: p.nodes, nps: p.nps))
     }
 
     func stopLive() {
@@ -232,7 +237,7 @@ final class EngineController {
         if let engine { liveTask = Task { await engine.stop() } }
     }
 
-    func clearLines() { flushTask?.cancel(); pending = nil; lines = []; linesFEN = nil; depth = 0; nps = 0; shownNodes = 0; shownDepth = 0; shownLineCount = 0 }
+    func clearLines() { flushTask?.cancel(); pending = nil; lines = []; linesFEN = nil; depth = 0; nps = 0; shownKey = nil; shownNodes = 0; shownDepth = 0; shownLineCount = 0 }
 
     // MARK: Fixed-depth (review)
 

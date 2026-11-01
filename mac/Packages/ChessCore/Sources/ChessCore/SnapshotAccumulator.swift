@@ -43,8 +43,8 @@ public struct SnapshotAccumulator: Sendable {
         if info.multipv == 1 {
             // A bound on the primary line is not a result; the exact score follows at the same depth.
             if info.isBound { return nil }
-            // Only the next depth starts a new snapshot; skipped or repeated depths are ignored.
-            if let last = lastPrimaryDepth, info.depth != last + 1 { return nil }
+            // Only a deeper depth starts a new snapshot (forward jumps are accepted); repeated or older depths are ignored.
+            if let last = lastPrimaryDepth, info.depth <= last { return nil }
             // The previous depth never completed: the engine sends fewer PVs than expected. Learn that.
             if pendingDepth != nil, !pending.isEmpty, pending.count < expectedPVs {
                 let contiguous = (1...pending.count).allSatisfy { pending[$0] != nil }
