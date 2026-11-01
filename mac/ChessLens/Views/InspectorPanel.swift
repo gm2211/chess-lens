@@ -9,7 +9,7 @@ struct InspectorView: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        GeometryReader { geo in column(height: geo.size.height) }
+        GeometryReader { geo in column(height: geo.size.height).frame(width: geo.size.width) }
     }
 
     private func column(height: Double) -> some View {
@@ -20,6 +20,7 @@ struct InspectorView: View {
                 EngineStrip()
                 Divider()
             }
+            PinnedEvalGraph()
             MoveListView()
                 .frame(minHeight: 100)
             Divider()
@@ -35,6 +36,7 @@ struct InspectorView: View {
                 Spacer()
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
             Divider()
             Text("Pieces: cburnett by Colin M.L. Burnett (CC BY-SA 3.0). Engine: Stockfish 18 (GPLv3).")
                 .font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
@@ -42,6 +44,7 @@ struct InspectorView: View {
                 .padding(.horizontal, 14).padding(.vertical, 8)
         }
         .background(Theme.surface)
+        .phaseTipHost()
     }
 }
 
@@ -87,6 +90,7 @@ private struct PanelHeader: View {
                     AIProviderChip(name: AIHub.shared.selected.displayName, ready: AIHub.shared.isReady) {
                         AIProvidersView().padding(12)
                     }
+                    .layoutPriority(-1)
                     .task { await AIHub.shared.refresh(AIHub.shared.selected) }
                 }
             }
