@@ -35,7 +35,7 @@ const vault = (provider) => {
 
 const providers = createProviders({
   chatgpt, claude, vault,
-  byos: { claude: byos.claude, openrouter: byos.openrouter, grok: byos.grok, groq: byos.groq, huggingface: byos.huggingface, isClaudeSubscriptionCredential: byos.isClaudeSubscriptionCredential },
+  byos: { claude: byos.claude, openrouter: byos.openrouter, grok: byos.grok, groq: byos.groq, huggingface: byos.huggingface, classifyProviderError: byos.classifyProviderError },
 });
 
 const handle = createHandler({ providers, write, urlSink, probeStore: () => new AsyncEntry('app.chesslens.sidecar.probe', 'probe') });

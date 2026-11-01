@@ -13,20 +13,21 @@ import { deviceSignIn, refresh as refreshGrok } from './grok-oauth.mjs';
 const hint = (system, max) => max ? `${system}\n\nKeep the answer under about ${max} tokens.`.trim() : system;
 const canceled = () => new PublicError('canceled', 'Canceled.');
 
-/** Turns any thrown value into an error that is safe to show. Provider text is shown only after redaction. */
-export function publicError(e, { secrets = [], who = 'The provider', signal } = {}) {
+/** Turns any thrown value into an error that is safe to show. The failure kind comes from byos
+ * classifyProviderError; provider text is shown only after redaction, capped at 200 characters. */
+export function publicError(e, { secrets = [], who = 'The provider', signal, classify } = {}) {
   if (signal?.aborted || e?.code === 'canceled') return canceled();
   if (e && SAFE_NAMES.has(e.name)) return e;
-  const status = e?.status;
-  const auth = status === 401 || status === 403 || e?.name === 'OpenRouterAuthenticationError';
+  const { kind } = classify(e);
+  if (kind === 'aborted') return canceled();
   let msg = '';
   if (e instanceof Error && ['Error', 'ProviderRequestError', 'OpenRouterAuthenticationError'].includes(e.name)) {
     msg = String(e.message);
     for (const s of secrets) if (s) msg = msg.split(s).join('[redacted]');
     msg = msg.replace(/\s+/g, ' ').slice(0, 200);
   }
-  if (auth) return new PublicError('reconnect-required', msg || `${who} rejected the credential.`);
-  if (status === 429) return new PublicError('quota', msg || `${who} usage is limited.`);
+  if (kind === 'auth' || e?.name === 'OpenRouterAuthenticationError') return new PublicError('reconnect-required', msg || `${who} rejected the credential.`);
+  if (kind === 'quota') return new PublicError('quota', msg || `${who} usage is limited.`);
   return new PublicError('unavailable', msg || `${who} is unavailable. Try again later.`);
 }
 
@@ -82,7 +83,7 @@ export function createProviders({ chatgpt, claude, byos, vault, fetch: fetcher =
   });
 
   // --- API-key providers on @byos/providers (Grok also signs in with OAuth) ---------------------------
-  function keyed({ id, name, authKind, setupText, setupURL, provider, oauth = false, rejectKey }) {
+  function keyed({ id, name, authKind, setupText, setupURL, provider, oauth = false }) {
     const store = vault(id);
     const read = async () => { const raw = await store.get(); try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
     const write = rec => store.set(JSON.stringify(rec));
@@ -99,7 +100,7 @@ export function createProviders({ chatgpt, claude, byos, vault, fetch: fetcher =
         return next.access;
       } catch (e) { if (e?.code === 'reconnect-required') await store.delete(); throw e; }
     }
-    const wrap = (e, secrets, signal) => publicError(e, { secrets, who: name, signal });
+    const wrap = (e, secrets, signal) => publicError(e, { secrets, who: name, signal, classify: byos.classifyProviderError });
     const list = async (key, signal) => (await provider.listModels(key, signal)).map(m => ({ id: m.id, name: m.name }));
     return {
       meta: { id, name, authKind, flow: oauth ? 'device' : '', setupText, setupURL },
@@ -119,7 +120,6 @@ export function createProviders({ chatgpt, claude, byos, vault, fetch: fetcher =
         }
         const key = typeof apiKey === 'string' ? apiKey.trim() : '';
         if (!key || key.length > 512 || /\s/.test(key)) throw new PublicError('bad-request', 'Paste a valid API key.');
-        rejectKey?.(key);
         // A cheap authenticated call proves the key works before it is stored.
         let models;
         try { models = await list(key, signal); } catch (e) {
@@ -145,11 +145,8 @@ export function createProviders({ chatgpt, claude, byos, vault, fetch: fetcher =
     };
   }
 
-  const subscriptionToken = key => {
-    if (byos.isClaudeSubscriptionCredential(key)) throw new PublicError('bad-request', 'That looks like a Claude subscription token. Use Sign in with Claude instead.');
-  };
   const add = a => out.set(a.meta.id, a);
-  add(keyed({ id: 'claudeAPI', name: 'Claude API', authKind: 'apiKey', setupText: 'Create a key in Claude Console. Max and Team plans include monthly API credits.', setupURL: 'https://platform.claude.com/settings/keys', provider: byos.claude(), rejectKey: subscriptionToken }));
+  add(keyed({ id: 'claudeAPI', name: 'Claude API', authKind: 'apiKey', setupText: 'Create a key in Claude Console. Max and Team plans include monthly API credits.', setupURL: 'https://platform.claude.com/settings/keys', provider: byos.claude() }));
   add(keyed({ id: 'openrouter', name: 'OpenRouter', authKind: 'apiKey', setupText: 'Create a key at openrouter.ai. One key reaches many models.', setupURL: 'https://openrouter.ai/settings/keys', provider: byos.openrouter({ appTitle: 'Étude', referer: 'https://github.com/gm2211/chess-lens' }) }));
   add(keyed({ id: 'grok', name: 'Grok', authKind: 'both', oauth: true, setupText: 'Sign in with SuperGrok, or paste an xAI API key from console.x.ai.', setupURL: 'https://console.x.ai', provider: byos.grok({ deviceCodeViaSite: false }) }));
   add(keyed({ id: 'groq', name: 'Groq', authKind: 'apiKey', setupText: 'Create a key at console.groq.com.', setupURL: 'https://console.groq.com/keys', provider: byos.groq() }));

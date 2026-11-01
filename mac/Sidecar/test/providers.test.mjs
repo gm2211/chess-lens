@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createProviders, publicError } from '../src/providers.mjs';
+
+// Stands in for byos classifyProviderError (the real one is bundled in by esbuild).
+const classifyProviderError = e => ({ kind: e?.name === 'AbortError' ? 'aborted' : [401, 403].includes(e?.status) ? 'auth' : [402, 429].includes(e?.status) ? 'quota' : 'unavailable' });
 import { createHandler } from '../src/server.mjs';
 import { deviceSignIn, TOKEN_URL, DEVICE_CODE_URL } from '../src/grok-oauth.mjs';
 
@@ -23,8 +26,8 @@ function memVault() {
   fn.m = m; return fn;
 }
 
-function setup(over = {}) {
-  const fakes = { claude: fakeByos('claude'), openrouter: fakeByos('openrouter'), grok: fakeByos('grok'), groq: fakeByos('groq'), huggingface: fakeByos('huggingface') };
+function setup(over = {}, claudeKey = KEY) {
+  const fakes = { claude: fakeByos('claude', { acceptedKey: claudeKey }), openrouter: fakeByos('openrouter'), grok: fakeByos('grok'), groq: fakeByos('groq'), huggingface: fakeByos('huggingface') };
   const vault = memVault();
   const claudeState = { connected: false, calls: [], portBusy: false };
   const claude = {
@@ -44,7 +47,7 @@ function setup(over = {}) {
   };
   const byos = {
     claude: () => fakes.claude.p, openrouter: () => fakes.openrouter.p, grok: () => fakes.grok.p, groq: () => fakes.groq.p, huggingface: () => fakes.huggingface.p,
-    isClaudeSubscriptionCredential: k => k.startsWith('sk-ant-oat'),
+    classifyProviderError,
   };
   const providers = createProviders({ chatgpt, claude, byos, vault, ...over });
   const out = [];
@@ -140,10 +143,10 @@ for (const id of ['claudeAPI', 'openrouter', 'groq', 'huggingface', 'grok']) {
   });
 }
 
-test('claudeAPI refuses a subscription token', async () => {
-  const { handle, out } = setup();
+test('claudeAPI no longer pre-refuses a pasted subscription token (byos claude() spends it)', async () => {
+  const { handle, out } = setup({}, 'sk-ant-oat01-abc');
   await handle({ id: 1, type: 'signIn', provider: 'claudeAPI', apiKey: 'sk-ant-oat01-abc' });
-  assert.equal(out[0].error.code, 'bad-request'); assert.match(out[0].error.message, /Sign in with Claude/);
+  assert.equal(out[0].error, undefined);
 });
 
 test('a stored key the provider later rejects shows as not ready', async () => {
@@ -154,9 +157,9 @@ test('a stored key the provider later rejects shows as not ready', async () => {
 });
 
 test('publicError redacts secrets and maps statuses', () => {
-  const e = publicError(Object.assign(new Error('bad key sk-123 here'), { name: 'ProviderRequestError', status: 429 }), { secrets: ['sk-123'] });
+  const e = publicError(Object.assign(new Error('bad key sk-123 here'), { name: 'ProviderRequestError', status: 429 }), { secrets: ['sk-123'], classify: classifyProviderError });
   assert.equal(e.code, 'quota'); assert.ok(!e.message.includes('sk-123'));
-  assert.equal(publicError(new TypeError('fetch failed')).message, 'The provider is unavailable. Try again later.');
+  assert.equal(publicError(new TypeError('fetch failed'), { classify: classifyProviderError }).message, 'The provider is unavailable. Try again later.');
 });
 
 // --- Grok device-code sign-in ------------------------------------------------------------------------
