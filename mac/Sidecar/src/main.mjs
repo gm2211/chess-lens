@@ -1,4 +1,4 @@
-// Chess Lens LLM sidecar entry point: newline-delimited JSON on stdin/stdout. Exits when stdin closes.
+// Étude LLM sidecar entry point: newline-delimited JSON on stdin/stdout. Exits when stdin closes.
 import { createInterface } from 'node:readline';
 import { createChatGptClient } from '@byos/chatgpt-local';
 import { createClaudeClient } from '@byos/claude-local';
@@ -14,7 +14,7 @@ console.log = console.info = console.warn = console.error = () => {};
 
 const urlSink = { fn: null };
 const common = {
-  appName: 'Chess Lens',
+  appName: 'Étude',
   namespace: 'chesslens',
   ...(process.env.CHESSLENS_LOCK_DIR ? { storageDirectory: process.env.CHESSLENS_LOCK_DIR } : {}),
   // The Swift side opens the URL (NSWorkspace); the sidecar only reports it (see signIn in server.mjs).

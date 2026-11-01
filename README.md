@@ -1,4 +1,4 @@
-# Chess Lens
+# Étude
 
 A native macOS chess analysis app (SwiftUI, Apple silicon, macOS 14+).
 
@@ -17,7 +17,7 @@ See [mac/README.md](mac/README.md). In short:
 ```sh
 mac/scripts/build-stockfish.sh   # Stockfish 18 + NNUE nets into mac/vendor (gitignored)
 mac/scripts/build-sidecar.sh     # bundled Node + BYOS sidecar into mac/vendor/sidecar
-mac/scripts/build-app.sh         # Release build -> mac/build/ChessLens.app
+mac/scripts/build-app.sh         # Release build -> mac/build/Etude.app
 ```
 
 `web/` holds an earlier browser version (Stockfish WASM); the Mac app is the maintained one.

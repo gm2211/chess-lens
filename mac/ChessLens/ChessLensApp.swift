@@ -12,7 +12,7 @@ struct ChessLensApp: App {
     }
 
     var body: some Scene {
-        Window("Chess Lens", id: "main") {
+        Window("Étude", id: "main") {
             ContentView()
                 .environment(model)
                 .frame(minWidth: 880, minHeight: 620)
@@ -42,7 +42,7 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
-            Button("About Chess Lens") { AboutPanel.show() }
+            Button("About Étude") { AboutPanel.show() }
         }
         CommandGroup(replacing: .newItem) {
             Button("New Game") { model.newGame() }.keyboardShortcut("n")

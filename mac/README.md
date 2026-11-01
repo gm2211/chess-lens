@@ -1,14 +1,14 @@
-# Chess Lens for macOS
+# Étude for macOS
 
-Native SwiftUI version of Chess Lens (macOS 14+, arm64): PGN / FEN / screenshot import, a move tree with
+Native SwiftUI version of Étude (macOS 14+, arm64): PGN / FEN / screenshot import, a move tree with
 variations, bundled Stockfish 18 analysis and a full-game review.
 
 ## Build & run
 
 ```sh
 mac/scripts/build-stockfish.sh      # clones Stockfish sf_18, builds it inside safe-run, copies binary + NNUE nets to mac/vendor/bin
-mac/scripts/build-app.sh            # xcodegen + Release build in safe-run; installs mac/build/ChessLens.app when the app isn't running
-open mac/build/ChessLens.app
+mac/scripts/build-app.sh            # xcodegen + Release build in safe-run; installs mac/build/Etude.app when the app isn't running
+open mac/build/Etude.app
 ```
 
 Or open `mac/ChessLens.xcodeproj` in Xcode after `xcodegen generate` and press Run. Use `-configuration Release` for the

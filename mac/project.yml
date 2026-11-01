@@ -30,19 +30,20 @@ targets:
         excludes:
           - Resources/Stockfish.entitlements
           - Resources/Sidecar.entitlements
+          - Resources/AppIcon-1024.png
     dependencies:
       - package: ChessCore
       - package: BoardVision
     info:
       path: ChessLens/Info.plist
       properties:
-        CFBundleDisplayName: Chess Lens
-        CFBundleName: Chess Lens
+        CFBundleDisplayName: Étude
+        CFBundleName: Étude
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: "14.0"
         LSApplicationCategoryType: public.app-category.board-games
-        NSHumanReadableCopyright: "Chess Lens. Includes Stockfish 18 (GPLv3), see Stockfish-Copying.txt."
+        NSHumanReadableCopyright: "Étude. Includes Stockfish 18 (GPLv3), see Stockfish-Copying.txt."
         CFBundleDocumentTypes:
           - CFBundleTypeName: Portable Game Notation
             CFBundleTypeRole: Viewer
@@ -58,7 +59,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.chesslens.ChessLens
-        PRODUCT_NAME: ChessLens
+        PRODUCT_NAME: Etude
         GENERATE_INFOPLIST_FILE: NO
         COMBINE_HIDPI_IMAGES: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
