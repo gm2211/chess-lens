@@ -76,7 +76,8 @@ public enum SummaryPrompt {
         "black": "1 sentence on Black's play, the same way",
         "turningPoint": \(example("the move where the game turned, like 23...Nf6")),
         "lessons": ["a habit to build, phrased as an instruction"],
-        "exercises": [{"title": "a few words", "fromMove": "a critical move ref; the position before it is the puzzle", "task": "what to find, e.g. Find a move that keeps your king safe", "concept": "the concept it trains"}]}
+        "exercises": [{"title": "a few words", "fromMove": "a critical move ref; the position before it is the puzzle", "task": "what to find, e.g. Find a move that keeps your king safe", "concept": "the concept it trains"}],
+        "beats": [\(beat)]}
         Give 2-4 concepts (causes, not moves), 1-3 examples per concept, at most 3 lessons, 2-3 exercises. \
         Cite only moves from the data or engine results, written as in the data (23...Nf6).
         The player clicks an example, sees the board after that move and reads its why, so pick moves that plainly \
@@ -92,7 +93,15 @@ public enum SummaryPrompt {
         Use "circles" for the pieces or squares "say" talks about, "arrows" for attacks, pins and plans, and "line" \
         (legal UCI moves from that position, at most 6) to act out what should have happened or what the threat was; \
         the board animates those moves and then returns to the game. Every step should point at something.
-        Keep the whole answer under 650 words.
+        The beats are the game's story told in 4-6 ordered steps, the outline the player walks through first: \
+        usually the setup, the slip, the turning point, the punishment and the finish, with an idea beat when one \
+        concept explains the game. Each beat shows the position after its "at" move. "slip", "turning" and "punish" \
+        beats must point at the real errors in the critical moments: a slip or turning beat's "at" is the error \
+        itself (the player will be asked to find the better move there, so explain why the engine's better move \
+        works), a punish beat's "at" is the reply that exploited it. Write for a club player: vivid but concrete, \
+        built around threats, plans and ideas, never evaluation numbers. The headline is one short sentence; the \
+        rule is a memorable rule of thumb.
+        Keep the whole answer under 850 words.
         """ + (tool ? "\n" + EngineTool.instructions : "")
     }
 
@@ -100,6 +109,9 @@ public enum SummaryPrompt {
     static func example(_ move: String) -> String {
         #"{"move": ""# + move + #"", "why": "1 short sentence tying THIS move to the concept, readable while looking at the board after it", "arrows": ["optional, at most 3, from+to squares like b5e8"], "squares": ["optional, at most 4 squares to highlight, like e8"]}"#
     }
+
+    /// The JSON shape of one story beat.
+    static let beat = #"{"kind": "setup, slip, turning, punish, finish or idea", "at": "the game move, like 6...Nf6", "title": "2-4 words, like The slip", "headline": "one short sentence", "explain": "2-3 plain sentences built around threats, plans and ideas", "rule": "one memorable rule of thumb", "arrows": ["optional, at most 3, like b5e8"], "circles": ["optional, at most 4 squares, like f6"]}"#
 
     /// The JSON shape of one story step.
     static let storyStep = #"{"at": "the game move whose position is shown, like 6...Nf6, or start", "say": "1-2 short spoken sentences about this position", "circles": ["optional, at most 4 squares to circle, like f6"], "arrows": ["optional, at most 3, like b5e8"], "line": ["optional, at most 6 legal UCI moves to animate from this position, like e1c1"], "pause": "optional seconds to hold, like 1"}"#
