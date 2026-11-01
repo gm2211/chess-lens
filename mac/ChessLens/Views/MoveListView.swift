@@ -34,10 +34,10 @@ func displayComment(_ raw: String?) -> String? {
     return s.isEmpty ? nil : s
 }
 
-/// Whether the game carries analysis from its source: comments, side variations or `[%eval]` values.
+/// Whether the game carries analysis from its source: comments, NAGs or `[%eval]` values.
 func gameHasSourceAnalysis(_ g: Game) -> Bool {
     g.nodes.contains { n in
-        n.children.count > 1 || displayComment(n.comment) != nil || n.comment.flatMap(PGN.evalAnnotation) != nil
+        !n.nags.isEmpty || displayComment(n.comment) != nil || n.comment.flatMap(PGN.evalAnnotation) != nil
     }
 }
 
@@ -130,7 +130,7 @@ private func buildRows(_ g: Game, showSource: Bool, anchors: [Int: [Int]]) -> [M
             flush()
         }
         let comment = showSource ? displayComment(g.nodes[next].comment) : nil
-        let alts = !showSource ? [] : g.nodes[cur].children.dropFirst().map { variationTokens(g, parent: cur, node: $0) }
+        let alts = g.nodes[cur].children.dropFirst().map { variationTokens(g, parent: cur, node: $0) }
         if comment != nil || !alts.isEmpty {
             flush()
             rows.append(.block(after: next, comment: comment, variations: alts))

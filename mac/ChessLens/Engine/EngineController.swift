@@ -60,32 +60,29 @@ final class EngineController {
     // MARK: Live analysis
 
     /// Starts (or restarts, after a short debounce) live analysis of `position`.
-    func analyze(_ position: Position, debounce: Duration = .milliseconds(140)) {
+    /// `history` is the root FEN and the moves leading to `position` (`Game.engineHistory`), so Stockfish sees repetitions.
+    func analyze(_ position: Position, history: (rootFEN: String, moves: [String])? = nil, debounce: Duration = .milliseconds(140)) {
         liveTask?.cancel()
         guard let engine else { return }
         liveGeneration += 1
         let gen = liveGeneration
         let fen = position.fen
         // A finished game has nothing to analyse.
-        if position.legalMoves().isEmpty {
-            lines = []; linesFEN = fen; depth = 0; nps = 0; searching = false
-            liveTask = Task { await engine.stop() }
-            return
-        }
+        if position.legalMoves().isEmpty { finish(fen: fen, engine: engine); return }
         searching = true
         if linesFEN != fen { lines = []; depth = 0 }
         liveTask = Task { [weak self] in
             try? await Task.sleep(for: debounce)
             if Task.isCancelled { return }
-            await self?.runLive(engine: engine, position: position, fen: fen, gen: gen)
+            await self?.runLive(engine: engine, position: position, fen: fen, history: history, gen: gen)
         }
     }
 
-    private func runLive(engine: UCIEngine, position: Position, fen: String, gen: Int) async {
+    private func runLive(engine: UCIEngine, position: Position, fen: String, history: (rootFEN: String, moves: [String])?, gen: Int) async {
         if status == .idle { status = .starting }
         let cfg = settings.config
         do {
-            let stream = try await engine.search(fen: fen, limit: .infinite(depthCap: cfg.depthCap == 0 ? .max : cfg.depthCap), multiPV: cfg.lines)
+            let stream = try await engine.search(fen: history?.rootFEN ?? fen, moves: history?.moves ?? [], limit: .infinite(depthCap: cfg.depthCap == 0 ? .max : cfg.depthCap), multiPV: cfg.lines)
             if gen != liveGeneration { return }
             status = .running
             linesFEN = fen
@@ -114,6 +111,19 @@ final class EngineController {
                 searching = false
             }
         }
+    }
+
+    /// The game is over at `position` (mate, stalemate, draw): no lines, nothing searched.
+    func markGameOver(_ position: Position) {
+        liveTask?.cancel()
+        guard let engine else { return }
+        liveGeneration += 1
+        finish(fen: position.fen, engine: engine)
+    }
+
+    private func finish(fen: String, engine: UCIEngine) {
+        lines = []; linesFEN = fen; depth = 0; nps = 0; searching = false
+        liveTask = Task { await engine.stop() }
     }
 
     private func apply(_ line: EngineLine) {

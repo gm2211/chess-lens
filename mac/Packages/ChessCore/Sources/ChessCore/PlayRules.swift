@@ -63,6 +63,18 @@ extension Game {
         return seen >= 3 ? .threefoldRepetition : nil
     }
 
+    /// What to send Stockfish as `position fen <rootFEN> moves <moves>` so it sees earlier occurrences of
+    /// positions (repetitions). Starts at the last irreversible move on the path to `node` (a capture or pawn
+    /// move resets the halfmove clock; nothing before it can repeat), or at the game root.
+    public func engineHistory(to node: Int) -> (rootFEN: String, moves: [String]) {
+        let line = path(to: node)
+        guard !line.isEmpty else { return (Position.startFEN, []) }
+        var startIdx = 0
+        for (i, id) in line.enumerated() where nodes[id].position.halfmove == 0 { startIdx = i }
+        let moves = line.dropFirst(startIdx + 1).compactMap { nodes[$0].move?.uci }
+        return (nodes[line[startIdx]].position.fen, moves)
+    }
+
     /// Where "take back" lands from `node` when `userSide` is playing: the user's previous turn,
     /// never before `anchor` (the node the session started or resumed from). Nil when there is nothing to take back.
     public func takeBackTarget(from node: Int, userSide: Side, anchor: Int) -> Int? {

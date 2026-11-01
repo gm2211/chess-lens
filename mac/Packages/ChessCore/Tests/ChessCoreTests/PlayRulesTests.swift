@@ -34,6 +34,25 @@ final class PlayRulesTests: XCTestCase {
         XCTAssertNil(g2.gameEnd(at: n2))
     }
 
+    func testEngineHistoryStartsAtLastIrreversibleMove() {
+        // e4 is a pawn move: history starts from the position after it; the knight shuffle follows.
+        let (g, n) = game("e4 e5 Nf3 Nf6 Ng1 Ng8")
+        let h = g.engineHistory(to: n)
+        XCTAssertEqual(h.rootFEN, g.nodes[g.path(to: n)[2]].position.fen)   // after ...e5
+        XCTAssertEqual(h.moves, ["g1f3", "g8f6", "f3g1", "f6g8"])
+        // Root node: no moves.
+        let r = g.engineHistory(to: 0)
+        XCTAssertEqual(r.rootFEN, g.nodes[0].position.fen)
+        XCTAssertEqual(r.moves, [])
+        // A capture resets it.
+        let (g2, n2) = game("e4 d5 exd5 Qxd5 Nc3 Qd8")
+        XCTAssertEqual(g2.engineHistory(to: n2).moves, ["b1c3", "d5d8"])
+        // Replaying the history from its root reaches the node's position.
+        var p = try! Position(fen: h.rootFEN)
+        for u in h.moves { p = try! p.applying(p.move(fromUCI: u)!) }
+        XCTAssertEqual(p.fen, g.nodes[n].position.fen)
+    }
+
     func testTakeBackTarget() {
         let (g, n) = game("e4 e5 Nf3 Nc6")                    // White to move at n
         let ids = g.path(to: n)                              // root, e4, e5, Nf3, Nc6

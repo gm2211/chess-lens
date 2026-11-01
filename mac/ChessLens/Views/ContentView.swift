@@ -281,9 +281,12 @@ private struct CoachBar: View {
     private var message: AttributedString? {
         let pos = app.position
         let mover = pos.turn == .white ? "White" : "Black"
-        if pos.isCheckmate { return try? AttributedString(markdown: "Checkmate \u{2014} **\(pos.turn == .white ? "Black" : "White")** wins") }
-        if pos.isStalemate { return AttributedString("Stalemate \u{2014} the game is drawn") }
-        if pos.isInsufficientMaterial { return AttributedString("Draw by insufficient material") }
+        switch app.game.gameEnd(at: app.currentID) {
+        case .checkmate(let w)?: return try? AttributedString(markdown: "Checkmate \u{2014} **\(w == .white ? "White" : "Black")** wins")
+        case .stalemate?: return AttributedString("Stalemate \u{2014} the game is drawn")
+        case let end?: return AttributedString(end.title)
+        case nil: break
+        }
         if pos.isCheck { return try? AttributedString(markdown: "**\(mover)** is in check") }
         return nil
     }

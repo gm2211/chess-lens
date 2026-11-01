@@ -105,7 +105,7 @@ private struct PanelHeader: View {
             @Bindable var app = app
             Toggle(isOn: $app.showSourceAnalysis) { Image(systemName: "text.bubble") }
                 .toggleStyle(.button).buttonStyle(QuietButtonStyle())
-                .help(app.showSourceAnalysis ? "Hide the source's comments, variations and evals" : "Show the source's comments, variations and evals")
+                .help(app.showSourceAnalysis ? "Hide the source's comments, evals and annotations" : "Show the source's comments, evals and annotations")
                 .accessibilityLabel("Show source analysis")
         }
     }
