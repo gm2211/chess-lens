@@ -12,53 +12,81 @@ public struct AITimedOut: Error, Equatable, Sendable {
     public init(_ kind: Kind) { self.kind = kind }
 }
 
-/// How long an AI request may stay silent, and how long it may run in all.
+/// How long an AI request may stay silent, and how long it may run in all. Reasoning models think for a long time
+/// before their first word, so the wait for the first chunk is longer than the gap allowed between chunks.
 public struct AITimeout: Equatable, Sendable {
+    /// Silence allowed before the first chunk (a model reasoning before it answers).
+    public var firstChunk: Duration
+    /// Silence allowed between chunks once the answer is streaming.
     public var inactivity: Duration
     public var overall: Duration
 
-    public init(inactivity: Duration, overall: Duration) {
+    public init(firstChunk: Duration, inactivity: Duration, overall: Duration) {
+        self.firstChunk = firstChunk
         self.inactivity = inactivity
         self.overall = overall
     }
 
     /// The lesson on the whole game: long answer, several engine rounds.
-    public static let lesson = AITimeout(inactivity: .seconds(45), overall: .seconds(180))
+    public static let lesson = AITimeout(firstChunk: .seconds(150), inactivity: .seconds(45), overall: .seconds(300))
     /// One moment's note.
-    public static let note = AITimeout(inactivity: .seconds(45), overall: .seconds(90))
+    public static let note = AITimeout(firstChunk: .seconds(90), inactivity: .seconds(45), overall: .seconds(150))
     /// One Ask AI answer.
-    public static let ask = AITimeout(inactivity: .seconds(45), overall: .seconds(90))
+    public static let ask = AITimeout(firstChunk: .seconds(90), inactivity: .seconds(45), overall: .seconds(150))
 }
 
-/// Re-emits `upstream`, but fails with `AITimedOut` when no element arrives for `inactivity`, or when more than
-/// `overall` has passed since the call. Cancels `upstream` on timeout (and when the consumer stops listening), so a
-/// request behind it (the sidecar's) is cancelled too. The clock starts at the call, so a request that never
-/// produces a first element times out as well.
+/// Lets the source of a stream say "still working" without producing text (a reasoning delta, a progress event).
+/// A pulse counts as activity for the inactivity window, but does not end the wait for the first chunk.
+public final class AIHeartbeat: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastPulse: ContinuousClock.Instant?
+    public init() {}
+    public func pulse() { lock.lock(); lastPulse = ContinuousClock.now; lock.unlock() }
+    var last: ContinuousClock.Instant? { lock.lock(); defer { lock.unlock() }; return lastPulse }
+}
+
+/// Re-emits `upstream`, but fails with `AITimedOut` when it goes quiet for too long, or runs past `overall`:
+/// - before the first element: `firstChunk` of silence (default `inactivity`), counted from the last heartbeat at
+///   the earliest `inactivity` after it;
+/// - after it: `inactivity` since the last element or heartbeat;
+/// - `overall` since the call, whatever else happens.
+/// Cancels `upstream` on timeout (and when the consumer stops listening), so a request behind it (the sidecar's) is
+/// cancelled too. The clock starts at the call, so a request that never produces a first element times out as well.
 public func withInactivityTimeout<T: Sendable>(
-    _ upstream: AsyncThrowingStream<T, Error>, inactivity: Duration, overall: Duration? = nil
+    _ upstream: AsyncThrowingStream<T, Error>, firstChunk: Duration? = nil, inactivity: Duration,
+    overall: Duration? = nil, heartbeat: AIHeartbeat? = nil
 ) -> AsyncThrowingStream<T, Error> {
     AsyncThrowingStream { continuation in
         let task = Task {
             let clock = ContinuousClock()
             let start = clock.now
-            let activity = AIActivity(start)
+            let state = AIActivity(start)
+            let beat = heartbeat ?? AIHeartbeat()
+            let first = firstChunk ?? inactivity
+            /// When the request is out of time, and why.
+            func deadline() -> (due: ContinuousClock.Instant, kind: AITimedOut.Kind) {
+                let chunk = state.snapshot
+                var last = chunk.last
+                if let p = beat.last, p > last { last = p }
+                var due = last.advanced(by: inactivity)
+                if !chunk.gotFirst { due = max(due, start.advanced(by: first)) }
+                if let overall, start.advanced(by: overall) <= due { return (start.advanced(by: overall), .overall) }
+                return (due, .inactive)
+            }
             do {
                 try await withThrowingTaskGroup(of: Void.self) { group in
                     group.addTask {
                         for try await value in upstream {
-                            await activity.touch(clock.now)
+                            state.touch(clock.now)
                             continuation.yield(value)
                         }
                     }
                     group.addTask {
                         while true {
-                            let last = await activity.last
-                            var due = last.advanced(by: inactivity)
-                            if let overall { due = min(due, start.advanced(by: overall)) }
-                            try await clock.sleep(until: due)
-                            let now = clock.now
-                            if let overall, now >= start.advanced(by: overall) { throw AITimedOut(.overall) }
-                            if now >= (await activity.last).advanced(by: inactivity) { throw AITimedOut(.inactive) }
+                            // Wake in slices so a deadline that moved earlier (the first chunk arrived) is noticed promptly.
+                            try await clock.sleep(until: min(deadline().due, clock.now.advanced(by: inactivity / 4)))
+                            let d = deadline()
+                            if clock.now >= d.due { throw AITimedOut(d.kind) }
                         }
                     }
                     try await group.next()
@@ -87,10 +115,13 @@ public func withTimeout<T: Sendable>(_ limit: Duration, operation: @escaping @Se
     }
 }
 
-private actor AIActivity {
-    private(set) var last: ContinuousClock.Instant
+private final class AIActivity: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last: ContinuousClock.Instant
+    private var gotFirst = false
     init(_ start: ContinuousClock.Instant) { last = start }
-    func touch(_ now: ContinuousClock.Instant) { last = now }
+    func touch(_ now: ContinuousClock.Instant) { lock.lock(); last = now; gotFirst = true; lock.unlock() }
+    var snapshot: (last: ContinuousClock.Instant, gotFirst: Bool) { lock.lock(); defer { lock.unlock() }; return (last, gotFirst) }
 }
 
 /// What a piece of AI work is doing, for deciding whether a model switch should restart it.
@@ -125,6 +156,18 @@ public enum AIRetry {
         let done = Set(jobs.filter { $0.phase == .done }.map(\.id))
         for id in wanted where !done.contains(id) && !ids.contains(id) { ids.append(id) }
         return ids
+    }
+}
+
+/// The line shown while waiting for a model's first word.
+public enum AIWaitText {
+    /// "Grok is thinking…", or "Grok is thinking… 25 s" once it has taken a few seconds; `note` (a model switch) replaces
+    /// the first part. Minutes read as "1 min 5 s".
+    public static func line(note: String?, provider: String, seconds: Int) -> String {
+        let base = note ?? "\(provider) is thinking\u{2026}"
+        guard seconds >= 5 else { return base }
+        let t = seconds < 60 ? "\(seconds) s" : "\(seconds / 60) min \(seconds % 60) s"
+        return "\(base) \(t)"
     }
 }
 

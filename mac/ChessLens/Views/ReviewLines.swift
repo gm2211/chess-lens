@@ -127,11 +127,7 @@ private struct CommentaryBlock: View {
                 .buttonStyle(.plain)
                 .help("Explain with AI")
             case .loading?:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Thinking\u{2026}")
-                        .font(.system(size: 12.5)).foregroundStyle(Theme.ink3)
-                }
+                AIWaitingLabel()
             case .done(let l, let unverified)?:
                 LessonView(lesson: l, positive: positive, unverified: unverified)
             case .needsSignIn?:

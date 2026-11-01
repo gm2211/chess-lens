@@ -67,6 +67,8 @@ actor LLMSidecar {
     private enum Event: Sendable {
         case url(URL, userCode: String?)
         case delta(String)
+        /// The model is working but has produced no text yet (a reasoning delta, a progress event).
+        case thinking
         case done([String: Sendable])
         case failed(LLMError)
     }
@@ -123,7 +125,7 @@ actor LLMSidecar {
                 case .url(let u, let code): onURL(u, code)
                 case .done(let r): return Self.parseStatus(r)
                 case .failed(let err): throw err
-                case .delta: break
+                case .delta, .thinking: break
                 }
             }
             throw Task.isCancelled ? LLMError.canceled : LLMError.terminated
@@ -146,14 +148,15 @@ actor LLMSidecar {
 
     /// Streams the model's answer as text chunks. Cancelling the consuming task (or breaking out of the loop)
     /// cancels the request. `model` nil uses the first model the provider offers.
-    nonisolated func complete(provider: String, model: String? = nil, system: String, prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<String, Error> {
+    nonisolated func complete(provider: String, model: String? = nil, system: String, prompt: String, maxTokens: Int? = nil,
+                              onThinking: (@Sendable () -> Void)? = nil) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     var body: [String: Any] = ["type": "complete", "provider": provider, "system": system, "prompt": prompt]
                     if let model { body["model"] = model }
                     if let maxTokens { body["maxTokens"] = maxTokens }
-                    try await self.stream(body, into: continuation)
+                    try await self.stream(body, into: continuation, onThinking: onThinking)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -172,13 +175,15 @@ actor LLMSidecar {
 
     // MARK: Requests
 
-    private func stream(_ body: [String: Any], into out: AsyncThrowingStream<String, Error>.Continuation) async throws {
+    private func stream(_ body: [String: Any], into out: AsyncThrowingStream<String, Error>.Continuation,
+                        onThinking: (@Sendable () -> Void)? = nil) async throws {
         let id = newID()
         let events = try send(body, id: id)
         try await withTaskCancellationHandler {
             for await e in events {
                 switch e {
                 case .delta(let s): out.yield(s)
+                case .thinking: onThinking?()
                 case .done: return
                 case .failed(let err): throw err
                 case .url: break
@@ -307,6 +312,8 @@ actor LLMSidecar {
             c.yield(.url(u, userCode: obj["userCode"] as? String))
         } else if let d = obj["delta"] as? String {
             c.yield(.delta(d))
+        } else if obj["thinking"] as? Bool == true || obj["progress"] != nil {
+            c.yield(.thinking)
         } else if let e = obj["error"] as? [String: Any] {
             let code = e["code"] as? String ?? "unavailable"
             let err: LLMError = code == "canceled" ? .canceled : .server(code: code, message: e["message"] as? String ?? "The operation could not be completed.")
@@ -318,7 +325,6 @@ actor LLMSidecar {
             c.finish()
             pending[id] = nil
         }
-        // progress events are ignored
     }
 
     private static func sendable(_ obj: [String: Any]) -> [String: Sendable] {

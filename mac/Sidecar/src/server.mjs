@@ -11,7 +11,7 @@
 //        {id, type: "signOut", provider}
 //        {id, type: "complete", provider, model?, system, prompt, maxTokens?}
 //        {id, type: "cancel", target} | "probe" | "ping"
-//   out: {id, url} {id, progress} {id, delta} {id, done: true, ...} {id, error: {code, message}}
+//   out: {id, url} {id, progress} {id, thinking: true} {id, delta} {id, done: true, ...} {id, error: {code, message}}
 // Keys and tokens never leave this process; replies carry account labels, model ids and generated text only.
 
 import { SAFE_NAMES } from './errors.mjs';
@@ -87,10 +87,14 @@ export function createHandler({ providers, write, urlSink = { fn: null }, probeS
       model = list[0].id;
     }
     const max = Number.isInteger(req.maxTokens) && req.maxTokens > 0 ? req.maxTokens : undefined;
+    // Reasoning models think silently before their first word; a throttled heartbeat tells the app the request is alive.
+    let lastBeat = 0;
+    const beat = () => { const t = Date.now(); if (t - lastBeat >= 1000) { lastBeat = t; write({ id, thinking: true }); } };
     const { text, streamed } = await a.complete({
       model, system, prompt, maxTokens: max, signal: ctl.signal,
       onDelta: d => write({ id, delta: d }),
-      onProgress: p => write({ id, progress: { phase: p.phase, outputChars: p.outputChars } }),
+      onThinking: beat,
+      onProgress: p => { write({ id, progress: { phase: p.phase, outputChars: p.outputChars } }); beat(); },
     });
     // Providers that only return a finished answer are replayed in chunks.
     if (!streamed) for (let i = 0; i < text.length; i += CHUNK) {
