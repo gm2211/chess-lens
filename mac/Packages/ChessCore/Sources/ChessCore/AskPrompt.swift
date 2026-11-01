@@ -53,7 +53,9 @@ public enum AskPrompt {
         the moves. Little notation, no evaluation numbers unless the player asks for them. Cite only moves from the \
         data, from engine results, or that the player named, and never say a piece is on a square unless the FEN \
         shows it. Reply in plain text (short paragraphs, no JSON, no headings). Keep it to \(words) unless the \
-        player asks for more. If the question isn't about chess, say so briefly.
+        player asks for more. If the question isn't about chess, say so briefly. If the player names a move that the \
+        data says is not legal, don't stop at saying so: kindly point out what they probably meant (often the engine's \
+        top move by the same piece, or a legal move to or near that square) and answer about that move.
         """ + (tool ? "\n" + EngineTool.instructions : "")
     }
 
@@ -120,6 +122,7 @@ public enum AskPrompt {
             }
             out.append("--- End of earlier conversation ---")
         }
+        for note in illegalMoveNotes(question: question, subject: s) { out.append("\nNote: " + note.text) }
         out.append("\nPlayer's question about the position above: \(question.trimmingCharacters(in: .whitespacesAndNewlines))")
         return out.joined(separator: "\n")
     }
