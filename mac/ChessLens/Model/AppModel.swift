@@ -284,6 +284,12 @@ final class AppModel {
         showImport = true
     }
 
+    /// Opens the Import sheet on the Set Up tab, seeded from the board on screen.
+    func openSetup() {
+        importer.seedSetup(from: position, flipped: flipped)
+        openImporter(.setup)
+    }
+
     /// Handles a pasted/dropped PGN or FEN text.
     func handleText(_ text: String, fromClipboard: Bool = true) {
         switch ImportDetect.classify(text) {

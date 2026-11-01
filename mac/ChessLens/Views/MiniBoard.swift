@@ -7,6 +7,7 @@ struct MiniBoard: View {
     var flipped: Bool = false
     var uncertain: Set<Square> = []
     var onTap: ((Square) -> Void)?
+    var onSecondaryTap: ((Square) -> Void)?
 
     var body: some View {
         GeometryReader { geo in
@@ -42,9 +43,37 @@ struct MiniBoard: View {
             .onTapGesture(coordinateSpace: .local) { loc in
                 if let sq = g.square(at: loc) { onTap?(sq) }
             }
+            .overlay {
+                if onSecondaryTap != nil {
+                    RightClickCatcher { loc in if let sq = g.square(at: loc) { onSecondaryTap?(sq) } }
+                }
+            }
         }
         .aspectRatio(1, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 3))
         .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.line2, lineWidth: 1))
+    }
+}
+
+/// Reports right-clicks (and control-clicks) while letting every other event fall through to the view below.
+private struct RightClickCatcher: NSViewRepresentable {
+    var onRightClick: (CGPoint) -> Void
+
+    func makeNSView(context: Context) -> CatcherView { CatcherView() }
+    func updateNSView(_ v: CatcherView, context: Context) { v.onRightClick = onRightClick }
+
+    final class CatcherView: NSView {
+        var onRightClick: ((CGPoint) -> Void)?
+        override var isFlipped: Bool { true }
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let e = NSApp.currentEvent else { return nil }
+            let isRight = e.type == .rightMouseDown || (e.type == .leftMouseDown && e.modifierFlags.contains(.control))
+            return isRight ? self : nil
+        }
+        override func rightMouseDown(with event: NSEvent) { report(event) }
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) { report(event) } else { super.mouseDown(with: event) }
+        }
+        private func report(_ event: NSEvent) { onRightClick?(convert(event.locationInWindow, from: nil)) }
     }
 }
