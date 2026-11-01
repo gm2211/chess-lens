@@ -31,6 +31,12 @@ struct ContentView: View {
             } message: {
                 Text("This removes the lines you played yourself. The game and its own variations stay.")
             }
+            .alert("Remove all side lines?", isPresented: $app.confirmClearSideLines) {
+                Button("Remove", role: .destructive) { app.clearSideLines() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes every branch off the main game line, including variations that came with the imported game.")
+            }
             .sheet(isPresented: $app.showPlaySetup, onDismiss: { focused = true }) { PlaySetupSheet() }
             .fileImporter(isPresented: $app.showFileImporter, allowedContentTypes: ImportSheet.pgnTypes) { result in
                 if case .success(let url) = result { app.handleFileURL(url) }

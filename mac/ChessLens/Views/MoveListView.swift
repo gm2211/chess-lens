@@ -143,6 +143,7 @@ struct MoveListView: View {
         let rows = buildRows(app.game, line: line, showSource: app.showSourceAnalysis, anchors: anchors)
         let offMain = app.isOffMainline
         let exploredCount = app.exploredCount
+        let sideLineCount = app.sideLineCount
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -165,13 +166,36 @@ struct MoveListView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
                     }
-                    if exploredCount > 0 {
+                    if exploredCount > 0 && sideLineCount > 0 {
+                        Menu {
+                            Button("Clear my lines") { app.requestClearExploredLines() }
+                            Button("Clear all side lines") { app.requestClearSideLines() }
+                        } label: {
+                            Label("Clear lines", systemImage: "trash")
+                                .font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("Remove the lines you explored, or every branch off the game line")
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, 8)
+                    } else if exploredCount > 0 {
                         Button { app.requestClearExploredLines() } label: {
                             Label("Clear my lines", systemImage: "trash")
                                 .font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
                         }
                         .buttonStyle(.plain)
                         .help("Remove the \(exploredCount) move\(exploredCount == 1 ? "" : "s") you explored; the game and its own variations stay")
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, 8)
+                    } else if sideLineCount > 0 {
+                        Button { app.requestClearSideLines() } label: {
+                            Label("Clear side lines", systemImage: "trash")
+                                .font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Remove every branch off the game line, including imported variations")
                         .frame(maxWidth: .infinity)
                         .padding(.bottom, 8)
                     }

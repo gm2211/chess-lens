@@ -59,6 +59,9 @@ struct AppCommands: Commands {
             Button("Clear Explored Lines") { model.requestClearExploredLines() }
                 .keyboardShortcut(.delete, modifiers: [.command, .shift])
                 .disabled(model.exploredCount == 0)
+            Button("Clear All Side Lines") { model.requestClearSideLines() }
+                .keyboardShortcut(.delete, modifiers: [.command, .option, .shift])
+                .disabled(model.sideLineCount == 0)
         }
         CommandMenu("Board") {
             Button(model.playSession == nil ? "Continue Against Engine\u{2026}" : "Stop Playing Against Engine") { model.togglePlay() }

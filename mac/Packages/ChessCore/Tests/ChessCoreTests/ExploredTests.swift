@@ -83,4 +83,34 @@ final class ExploredTests: XCTestCase {
         let s = try JSONDecoder().decode(Saved.self, from: old)
         XCTAssertNil(s.explored)
     }
+
+    func testClearSideLinesKeepsMainLineAndRemaps() {
+        var g = base()                                    // main 1.e4 e5 2.Nf3 Nc6, variation 2.Nc3
+        let nc6 = find(g, "e4", "e5", "Nf3", "Nc6")
+        let nc3 = find(g, "e4", "e5", "Nc3")
+        let tail = play(&g, "f1b5", after: nc6, explored: false)   // trailing main-line move
+        let side = play(&g, "d7d5", after: find(g, "e4"))
+        let deeper = play(&g, "e4d5", after: side)
+        XCTAssertEqual(g.sideLineCount, 3)               // Nc3, d5, exd5
+        let (removed, remap) = g.clearSideLines()
+        XCTAssertEqual(removed, 3)
+        XCTAssertNil(remap[nc3]); XCTAssertNil(remap[side]); XCTAssertNil(remap[deeper])
+        XCTAssertEqual(g.mainlineSAN, ["e4", "e5", "Nf3", "Nc6", "Bb5"])
+        XCTAssertEqual(g.nodes[remap[tail]!].san, "Bb5")
+        XCTAssertEqual(g.nodes.count, 6)
+        XCTAssertEqual(g.sideLineCount, 0)
+        XCTAssertTrue(g.isOnMainline(g.mainline().last!))
+        for n in g.nodes { XCTAssertEqual(n.id, g.nodes.firstIndex { $0.id == n.id }) }
+        let none = g.clearSideLines()
+        XCTAssertEqual(none.removed, 0)
+    }
+
+    func testClearSideLinesDropsPromotedAwayMainLine() {
+        var g = base()
+        let d = play(&g, "d7d5", after: find(g, "e4"))
+        g.promote(d)                                      // d5 is now main; e5 line is the side line
+        g.clearSideLines()
+        XCTAssertEqual(g.mainlineSAN, ["e4", "d5"])
+        XCTAssertEqual(g.nodes.count, 3)
+    }
 }
