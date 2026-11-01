@@ -54,15 +54,72 @@ final class PlayRulesTests: XCTestCase {
         XCTAssertNil(g2.takeBackTarget(from: n, userSide: .white, anchor: other))
     }
 
-    func testStrengthMapping() {
+    /// A session's `tip`/`anchor` can outlive its game (New Game while the play banner is still on screen).
+    func testStaleNodeIdsAreSafe() {
+        let (g, n) = game("e4 e5")
+        let fresh = Game()
+        XCTAssertEqual(fresh.path(to: n), [])
+        XCTAssertEqual(fresh.path(to: -1), [])
+        XCTAssertNil(fresh.takeBackTarget(from: n, userSide: .white, anchor: 0))
+        XCTAssertNil(fresh.takeBackTarget(from: 0, userSide: .white, anchor: n))
+        XCTAssertNil(fresh.gameEnd(at: n))
+        XCTAssertEqual(g.path(to: n).count, 3)
+    }
+
+    func testStrengthRangeAndOptions() {
         XCTAssertEqual(PlayStrength.eloRange, 1320...3190)
         XCTAssertEqual(PlayStrength.clampedElo(500), 1320)
         XCTAssertEqual(PlayStrength.clampedElo(4000), 3190)
         XCTAssertEqual(PlayStrength.clampedElo(2000), 2000)
-        for s in PlayStrength.allCases { if let e = s.elo { XCTAssertTrue(PlayStrength.eloRange.contains(e)) } }
+        XCTAssertEqual(PlayStrength(elo: 9999).elo, 3190)
         XCTAssertNil(PlayStrength.full.elo)
-        XCTAssertEqual(PlayStrength.club.detail, "Club (1800)")
+        XCTAssertEqual(PlayStrength(elo: 1850).title, "Stockfish 1850")
+        XCTAssertEqual(PlayStrength.full.title, "Stockfish (full strength)")
+        XCTAssertEqual(PlayStrength(elo: 1800).presetLabel, "Club")
+        XCTAssertNil(PlayStrength(elo: 1850).presetLabel)
         XCTAssertEqual(PlayStrength.full.uciOptions.first?.value, "false")
-        XCTAssertEqual(PlayStrength.club.uciOptions.map(\.value), ["true", "1800"])
+        XCTAssertEqual(PlayStrength(elo: 1800).uciOptions.map(\.value), ["true", "1800"])
+    }
+
+    func testLegacyPresetMigration() {
+        XCTAssertEqual(PlayStrength(legacyPreset: "beginner")?.elo, 1350)
+        XCTAssertEqual(PlayStrength(legacyPreset: "club")?.elo, 1800)
+        XCTAssertEqual(PlayStrength(legacyPreset: "expert")?.elo, 2200)
+        XCTAssertEqual(PlayStrength(legacyPreset: "master")?.elo, 2600)
+        XCTAssertEqual(PlayStrength(legacyPreset: "full"), .full)
+        XCTAssertNil(PlayStrength(legacyPreset: "nope"))
+    }
+
+    /// Stockfish 18 search.h `Skill`: level = clamp(((37.2473e - 40.8525)e + 22.2943)e - 0.311438, 0, 19).
+    func testSkillLevelMatchesStockfish() {
+        XCTAssertEqual(PlayStrength.skillLevel(forElo: 1320), 0)                       // the fit dips below 0
+        XCTAssertEqual(PlayStrength.skillLevel(forElo: 3190), 18.378, accuracy: 0.001)
+        XCTAssertEqual(PlayStrength.skillLevel(forElo: 1800), 3.350, accuracy: 0.01)
+        XCTAssertEqual(PlayStrength.skillLevel(forElo: 2200), 5.01, accuracy: 0.01)
+        XCTAssertEqual(PlayStrength.skillLevel(forElo: 2600), 7.75, accuracy: 0.01)
+        XCTAssertNil(PlayStrength.full.skillLevel)
+        // Monotonic over the range, so the slider never makes it weaker as it moves right.
+        var last = -1.0
+        for elo in stride(from: 1320, through: 3190, by: 10) {
+            let l = PlayStrength.skillLevel(forElo: elo)
+            XCTAssertGreaterThanOrEqual(l, last); last = l
+        }
+    }
+
+    func testPickDepthAndMoveTime() {
+        XCTAssertEqual(PlayStrength(elo: 1320).pickDepth, 1)
+        XCTAssertEqual(PlayStrength(elo: 1800).pickDepth, 4)
+        XCTAssertEqual(PlayStrength(elo: 2600).pickDepth, 8)
+        XCTAssertEqual(PlayStrength(elo: 3190).pickDepth, 19)
+        XCTAssertNil(PlayStrength.full.pickDepth)
+        XCTAssertEqual(PlayStrength(elo: 1800).moveTime(fullStrengthMillis: 3000), 250)
+        XCTAssertEqual(PlayStrength(elo: 3190).moveTime(fullStrengthMillis: 500), 3500)
+        XCTAssertEqual(PlayStrength.full.moveTime(fullStrengthMillis: 3000), 3000)
+        // Stronger never thinks less.
+        var last = 0
+        for elo in stride(from: 1320, through: 3190, by: 10) {
+            let t = PlayStrength(elo: elo).limitedMoveTime!
+            XCTAssertGreaterThanOrEqual(t, last); last = t
+        }
     }
 }

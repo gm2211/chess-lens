@@ -64,11 +64,12 @@ public struct Game: Sendable, Equatable {
         return id
     }
 
-    /// Node ids from the root to `node` inclusive.
+    /// Node ids from the root to `node` inclusive; empty when `node` is not in this game (a stale id).
     public func path(to node: Int) -> [Int] {
         var out: [Int] = []
         var cur: Int? = node
-        while let c = cur { out.append(c); cur = nodes[c].parent }
+        while let c = cur, nodes.indices.contains(c) { out.append(c); cur = nodes[c].parent }
+        guard cur == nil else { return [] }
         return out.reversed()
     }
 

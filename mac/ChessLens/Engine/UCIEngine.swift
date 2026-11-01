@@ -50,10 +50,13 @@ actor UCIEngine {
     private let executableURL: URL?
     private var process: Process?
     private var input: FileHandle?
+    private var output: FileHandle?
     private var readTask: Task<Void, Never>?
     private var startTask: Task<Void, Error>?
     private var started = false
     private var dead = false
+    /// Bumped per launch so a killed process's late termination never marks its replacement dead.
+    private var launches = 0
 
     private var active: Active?
     private var nextSearchID = 0
@@ -64,6 +67,8 @@ actor UCIEngine {
     private var appliedThreads = 0
     private var appliedHash = 0
     private var pendingOptions: [(name: String, value: String)] = []
+    /// Every UCI option sent so far, replayed when a fresh process is launched after `restart()` or a crash.
+    private var sentOptions: [(name: String, value: String)] = []
     private var stopWaiters: [CheckedContinuation<Void, Never>] = []
     private var tokenWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
@@ -110,6 +115,11 @@ actor UCIEngine {
     private func launchAndHandshake() async throws {
         guard let url = executableURL else { throw EngineError.executableMissing }
         appliedThreads = 0; appliedHash = 0; currentMultiPV = 1
+        launches += 1
+        let generation = launches
+        dead = false
+        pendingOptions = sentOptions + pendingOptions
+        sentOptions = []
         let p = Process()
         p.executableURL = url
         let inPipe = Pipe(), outPipe = Pipe()
@@ -123,7 +133,7 @@ actor UCIEngine {
         }
         p.terminationHandler = { [weak self] proc in
             engineLog.info("stockfish exited status=\(proc.terminationStatus)")
-            Task { await self?.processDied() }
+            Task { await self?.processDied(generation) }
         }
         do { try p.run() } catch {
             engineLog.error("launch failed: \(error.localizedDescription, privacy: .public)")
@@ -132,13 +142,23 @@ actor UCIEngine {
         process = p
         input = inPipe.fileHandleForWriting
         let reader = outPipe.fileHandleForReading
+        output = reader
         _ = errPipe
+        // readabilityHandler rather than `reader.bytes.lines`: Foundation runs every FileHandle.AsyncBytes read on one
+        // serial queue (AsyncBytesIOActorQueue) with a blocking read(2), so an idle engine (live analysis stopped while
+        // playing) parks that queue and the play engine's `bestmove` is never read: "Stockfish is thinking..." forever.
+        let lines = AsyncStream<String> { cont in
+            let buffer = LineBuffer()
+            reader.readabilityHandler = { h in
+                let data = h.availableData
+                if data.isEmpty { h.readabilityHandler = nil; cont.finish(); return }
+                for line in buffer.append(data) { cont.yield(line) }
+            }
+        }
         readTask = Task { [weak self] in
-            do {
-                for try await line in reader.bytes.lines {
-                    await self?.handle(line: line)
-                }
-            } catch {}
+            for await line in lines {
+                await self?.handle(line: line)
+            }
         }
         send("uci")
         await waitFor("uciok")
@@ -168,10 +188,26 @@ actor UCIEngine {
             if p.isRunning { p.terminate() }
         }
         readTask?.cancel()
+        output?.readabilityHandler = nil
     }
 
-    private func processDied() {
+    /// Kills a process that stopped answering. Waiting searches end without a move (or throw `terminated`);
+    /// the next `start()` or `search` launches a fresh process with the same options.
+    func restart() {
+        engineLog.error("restarting an unresponsive engine")
+        let p = process
+        readTask?.cancel()
+        output?.readabilityHandler = nil
+        processDied(launches)
+        launches += 1                      // the old process's termination handler is now ignored
+        process = nil; input = nil; output = nil
+        if let p, p.isRunning { p.terminate() }
+    }
+
+    private func processDied(_ generation: Int) {
+        guard generation == launches else { return }
         dead = true
+        startTask = nil                    // so `start()` launches again instead of returning the old result
         started = false
         if let a = active { a.continuation.finish() }
         active = nil
@@ -228,6 +264,7 @@ actor UCIEngine {
         if threads != appliedThreads { send("setoption name Threads value \(threads)"); appliedThreads = threads }
         if hash != appliedHash { send("setoption name Hash value \(hash)"); appliedHash = hash }
         for o in pendingOptions { send("setoption name \(o.name) value \(o.value)") }
+        sentOptions.append(contentsOf: pendingOptions)
         pendingOptions = []
     }
 
@@ -300,5 +337,23 @@ actor UCIEngine {
         send("ucinewgame")
         send("isready")
         await waitFor("readyok")
+    }
+}
+
+/// Splits stdout chunks into newline-terminated lines. Only touched from the pipe's readability handler, which
+/// FileHandle calls serially.
+private final class LineBuffer: @unchecked Sendable {
+    private var pending = Data()
+
+    func append(_ data: Data) -> [String] {
+        pending.append(data)
+        var lines: [String] = []
+        while let nl = pending.firstIndex(of: 0x0A) {
+            var line = pending[pending.startIndex..<nl]
+            if line.last == 0x0D { line = line.dropLast() }
+            lines.append(String(decoding: line, as: UTF8.self))
+            pending.removeSubrange(pending.startIndex...nl)
+        }
+        return lines
     }
 }

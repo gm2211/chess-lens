@@ -25,18 +25,15 @@ struct PlaySetupSheet: View {
                 .pickerStyle(.segmented).labelsHidden()
             }
 
-            field("Strength") {
-                Picker("Strength", selection: $setup.strength) {
-                    ForEach(PlayStrength.allCases) { Text($0.detail).tag($0) }
-                }
-                .pickerStyle(.menu).labelsHidden()
-            }
+            strengthField
 
-            field("Engine thinks for") {
-                Picker("Engine thinks for", selection: $setup.thinkMillis) {
-                    ForEach(PlaySetup.thinkChoices, id: \.self) { Text(Self.thinkLabel($0)).tag($0) }
+            if setup.strength == .full {
+                field("Engine thinks for") {
+                    Picker("Engine thinks for", selection: $setup.thinkMillis) {
+                        ForEach(PlaySetup.thinkChoices, id: \.self) { Text(Self.thinkLabel($0)).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
                 }
-                .pickerStyle(.segmented).labelsHidden()
             }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -63,6 +60,75 @@ struct PlaySetupSheet: View {
         .onAppear { setup.userSide = app.position.turn }
     }
 
+    // MARK: Strength
+
+    /// The slider's last stop, one step past Stockfish's highest Elo, means full strength.
+    private static let fullStop = Double(PlayStrength.eloRange.upperBound + 100)
+
+    private var sliderValue: Binding<Double> {
+        Binding(
+            get: { setup.strength.elo.map(Double.init) ?? Self.fullStop },
+            set: { v in
+                setup.strength = v > Double(PlayStrength.eloRange.upperBound) ? .full : PlayStrength(elo: Int((v / 10).rounded()) * 10)
+            })
+    }
+
+    private var strengthField: some View {
+        let s = setup.strength
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Strength").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.ink2)
+                Spacer()
+                Text(s.elo.map { "Elo \($0)" } ?? "Full strength").font(.mono(12.5, weight: .semibold)).foregroundStyle(Theme.ink)
+            }
+            Slider(value: sliderValue, in: Double(PlayStrength.eloRange.lowerBound)...Self.fullStop, step: 10)
+                .labelsHidden()
+                .accessibilityLabel("Engine strength")
+                .accessibilityValue(s.elo.map { "Elo \($0)" } ?? "Full strength")
+            HStack(spacing: 4) {
+                ForEach(PlayStrength.presets, id: \.label) { p in
+                    Button { setup.strength = p.strength } label: {
+                        Text(p.label).font(.system(size: 11.5, weight: s == p.strength ? .semibold : .regular))
+                            .foregroundStyle(s == p.strength ? Theme.accentInk : Theme.ink3)
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(s == p.strength ? Theme.accentSoft : .clear, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(p.strength.elo.map { "Elo \($0)" } ?? "No strength limit")
+                }
+            }
+            derived(s)
+        }
+    }
+
+    /// What the Elo means for how Stockfish plays (see `PlayStrength`).
+    private func derived(_ s: PlayStrength) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let level = s.skillLevel, let depth = s.pickDepth, let ms = s.limitedMoveTime {
+                fact("Skill level", String(format: "%.1f of 20", level))
+                fact("Looks ahead", "\(depth) half-move\(depth == 1 ? "" : "s") before picking")
+                fact("Max think time", Self.thinkLabel(ms) + " per move")
+            } else {
+                fact("Skill level", "20 of 20 (no limit)")
+                fact("Looks ahead", "As deep as the think time allows")
+            }
+            Text(s.note).font(.system(size: 12.5)).foregroundStyle(Theme.ink3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func fact(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label).font(.system(size: 12.5)).foregroundStyle(Theme.ink3)
+            Spacer(minLength: 8)
+            Text(value).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.ink2).monospacedDigit()
+        }
+    }
+
     private func field<C: View>(_ label: String, @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.ink2)
@@ -70,7 +136,11 @@ struct PlaySetupSheet: View {
         }
     }
 
-    static func thinkLabel(_ ms: Int) -> String { ms < 1000 ? "0.5 s" : "\(ms / 1000) s" }
+    /// "0.25 s", "0.5 s", "1 s", "3.5 s".
+    static func thinkLabel(_ ms: Int) -> String {
+        let s = Double(ms) / 1000
+        return (s == s.rounded() ? String(Int(s)) : String(format: "%g", s)) + " s"
+    }
 }
 
 // MARK: - Banner
