@@ -441,28 +441,58 @@ private struct SummaryCard: View {
     }
 }
 
-/// Opening / middlegame / endgame accuracy as a short label + percentage.
+/// Opening / middlegame / endgame accuracy: a three-segment marker (which part of the game) + percentage,
+/// with a hover label that appears almost at once (the system tooltip takes about a second).
 private struct PhaseChip: View {
     let phase: GamePhase
     let stat: PhaseStat
+    @State private var hovering = false
+    @State private var showTip = false
 
     var body: some View {
         let acc = Int((stat.accuracy ?? 0).rounded())
-        HStack(spacing: 4) {
-            Text(label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.ink3)
+        HStack(spacing: 5) {
+            PhaseMarker(index: index).foregroundStyle(Theme.ink3)
             Text("\(acc)%").font(.system(size: 11.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.ink2)
         }
-        .padding(.horizontal, 5).padding(.vertical, 2)
+        .fixedSize()
+        .padding(.horizontal, 6).padding(.vertical, 3)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 3))
-        .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.line, lineWidth: 1))
-        .help(help(acc))
+        .overlay(RoundedRectangle(cornerRadius: 3).stroke(hovering ? Theme.line2 : Theme.line, lineWidth: 1))
+        .overlay(alignment: .top) {
+            if showTip {
+                Text(help(acc))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.surface)
+                    .padding(.horizontal, 7).padding(.vertical, 4)
+                    .background(Theme.ink, in: RoundedRectangle(cornerRadius: 4))
+                    .fixedSize()
+                    .offset(y: -28)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
+        .zIndex(showTip ? 1 : 0)
+        .onHover { inside in
+            hovering = inside
+            if inside {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(120))
+                    if hovering { withAnimation(.easeOut(duration: 0.08)) { showTip = true } }
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.08)) { showTip = false }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(help(acc))
     }
 
-    private var label: String {
+    private var index: Int {
         switch phase {
-        case .opening: "Opening"
-        case .middlegame: "Middle"
-        case .endgame: "End"
+        case .opening: 0
+        case .middlegame: 1
+        case .endgame: 2
         }
     }
 
@@ -474,6 +504,22 @@ private struct PhaseChip: View {
         }
         return "\(phase.name): \(acc)% accuracy over \(stat.moves) move\(stat.moves == 1 ? "" : "s")"
             + (bits.isEmpty ? "" : " (\(bits.joined(separator: ", ")))")
+    }
+}
+
+/// Three short segments with the phase's one solid: opening, middlegame, endgame.
+private struct PhaseMarker: View {
+    let index: Int
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { i in
+                Capsule()
+                    .frame(width: 6, height: i == index ? 4 : 2)
+                    .opacity(i == index ? 1 : 0.35)
+            }
+        }
+        .frame(height: 6)
     }
 }
 
