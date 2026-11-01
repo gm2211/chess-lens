@@ -54,8 +54,7 @@ The "Embed LLM sidecar" build phase (`scripts/embed-sidecar.sh`) copies `Helpers
 `model`, `states`, `refresh(_:)`, `signIn(_:apiKey:paste:)`, `submitCode(_:code:)`, `signOut(_:)`,
 `complete(system:prompt:maxTokens:) -> AsyncThrowingStream<String, Error>`), over `LLMSidecar.swift` (the stdio client) and
 `AppleIntelligence.swift`. The selected provider and per-provider model are in `UserDefaults` (`ai.provider`, `ai.model.<id>`).
-Update the vendored kit with `scripts/vendor.mjs` from a BYOS checkout (`--packages chatgpt-local,claude-local,providers --out mac/Sidecar/byos
---revision mac/Sidecar/byos/BYOS_REVISION`); never edit `Sidecar/byos`. Limits: ChatGPT returns the finished text, so its `complete`
+Update the vendored kit with `~/.claude/bin/safe-run.sh -C . -- node scripts/sync-byos.mjs /path/to/byos <full-40-char-sha>` (runs BYOS's `scripts/vendor.mjs` from that exact commit; entry `chess-lens` in BYOS `consumers.json`); never edit `Sidecar/byos`. Limits: ChatGPT returns the finished text, so its `complete`
 replays it as chunks (the other providers stream live), and `maxTokens` is only a prompt hint except for Claude.
 
 ## Layout

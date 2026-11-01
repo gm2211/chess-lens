@@ -1,4 +1,4 @@
-commit=652bd73e0bf65a6313ff8da13ee6a07ceea693cf
+commit=dbb68148492772ccc8c124bc6664726a6bf4eab6
 sourcePath=packages
 mode=packages
 packages=chatgpt-local,claude-local,core,providers

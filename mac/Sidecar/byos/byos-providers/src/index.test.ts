@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 // Built output: sources use NodeNext `.js` imports.
-import { endpointFor, grok, groq, isChatModel, NOT_RECOMMENDED_REASON, openrouter, orderServices, parseSseLine, parseXaiResponsesPayload, streamChatCompletions, type ServiceKey } from '../dist/index.js';
+import { classifyProviderError, listModelsForEndpoint, listOpenRouterModels, OpenRouterAuthenticationError, ProviderRequestError, claudeAcceptsTemperature, endpointFor, grok, groq, isChatModel, NOT_RECOMMENDED_REASON, openrouter, orderServices, parseSseLine, parseXaiResponsesPayload, streamChatCompletions, type ServiceKey } from '../dist/index.js';
 
 type Call = { url: string; init?: RequestInit };
 function fakeFetch(respond: (call: Call) => Response): Call[] {
@@ -110,9 +110,23 @@ test('model lists put the newest flagship first and dated variants below it', as
   ]);
 });
 
+const GROK_IDS = ['grok-4.20-0309-non-reasoning', 'grok-4.20-0309-reasoning', 'grok-4.20-multi-agent-0309', 'grok-4.3', 'grok-4.5', 'grok-4.6', 'grok-4.7'];
+const GROK_NEWEST_FIRST = ['grok-4.7', 'grok-4.6', 'grok-4.5', 'grok-4.3', 'grok-4.20-0309-non-reasoning', 'grok-4.20-0309-reasoning', 'grok-4.20-multi-agent-0309'];
+
+test('model lists without created put undated builds first, newest version first, then dated variants', async () => {
+  fakeFetch(() => new Response(JSON.stringify({ data: GROK_IDS.map(id => ({ id })) })));
+  assert.deepEqual((await grok().listModels('k')).map(model => model.id), GROK_NEWEST_FIRST);
+});
+
+test('model lists with created timestamps give the same order', async () => {
+  const created: Record<string, number> = { 'grok-4.3': 1776000000, 'grok-4.5': 1781000000, 'grok-4.6': 1785000000, 'grok-4.7': 1790000000 };
+  fakeFetch(() => new Response(JSON.stringify({ data: GROK_IDS.map(id => ({ id, created: created[id] ?? 1773000000 })) })));
+  assert.deepEqual((await grok().listModels('k')).map(model => model.id), GROK_NEWEST_FIRST);
+});
+
 test('non-chat models are recognized by id words, not substrings', () => {
   for (const id of ['grok-4.7', 'grok-build-0.1', 'llama-3.2-11b-vision-instruct', 'gpt-5', 'qwen3-32b']) assert.equal(isChatModel(id), true, id);
-  for (const id of ['grok-imagine-image', 'grok-imagine-video-1.5', 'dall-e-3', 'gpt-image-1', 'text-embedding-3-small', 'whisper-large-v3', 'playai-tts', 'omni-moderation-latest']) assert.equal(isChatModel(id), false, id);
+  for (const id of ['grok-imagine-image', 'grok-imagine-video-1.5', 'dall-e-3', 'gpt-image-1', 'text-embedding-3-small', 'whisper-large-v3', 'playai-tts', 'omni-moderation-latest', 'imagen-4.0-generate-001', 'gemini-2.5-flash-image-preview', 'nano-banana-pro', 'veo-3.0-generate-preview', 'lyria-realtime']) assert.equal(isChatModel(id), false, id);
 });
 
 test('provider model discovery forwards cancellation signal', async () => {
@@ -200,5 +214,39 @@ test('orderServices lists subscriptions first, then OpenRouter, Groq, Hugging Fa
   const keyOf = (id: string) => (id === 'other' ? undefined : id as ServiceKey);
   assert.deepEqual(orderServices(ids, keyOf), ['claude', 'chatgpt', 'grok', 'openrouter', 'groq', 'huggingface', 'other']);
   assert.deepEqual(orderServices(ids, keyOf, ['openrouter', 'grok']), ['openrouter', 'grok', 'huggingface', 'other', 'groq', 'chatgpt', 'claude']);
-  assert.ok(NOT_RECOMMENDED_REASON.claude);
+  assert.equal(NOT_RECOMMENDED_REASON.claude, undefined);
+});
+
+test('claudeAcceptsTemperature is false for Claude 4.7+ and the 5-series, true for older Claude', () => {
+  for (const id of ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307', 'claude-sonnet-4-20250514', 'claude-opus-4-1-20250805', 'claude-sonnet-4-5', 'claude-haiku-4-5-20251001', 'claude-opus-4-6', 'Claude-Sonnet-4-6']) assert.equal(claudeAcceptsTemperature(id), true, id);
+  for (const id of ['claude-opus-4-7', 'claude-sonnet-4-8', 'claude-opus-4-10', 'claude-sonnet-5-5', 'claude-opus-5', 'claude-5-sonnet', 'claude-sonnet-6']) assert.equal(claudeAcceptsTemperature(id), false, id);
+  for (const id of ['', 'claude', 'claude-sonnet', 'gpt-4', 'grok-4.7', 'my-claude-4-5']) assert.equal(claudeAcceptsTemperature(id), false, id);
+});
+
+test('model discovery failures carry the HTTP status and keep their message', async () => {
+  fakeFetch(() => Response.json({ error: { message: 'Insufficient credits for sk-secret-key' } }, { status: 402 }));
+  await assert.rejects(listModelsForEndpoint({ ...endpointFor('groq', 'sk-secret-key', {}) }), (e: ProviderRequestError) => e instanceof ProviderRequestError && e.status === 402 && e.message.includes('Insufficient credits') && !e.message.includes('sk-secret-key'));
+  fakeFetch(() => Response.json({}, { status: 503 }));
+  await assert.rejects(listModelsForEndpoint(endpointFor('groq', 'k', {})), (e: ProviderRequestError) => e.status === 503 && e.message === 'Could not load models.');
+  await assert.rejects(listOpenRouterModels('k'), (e: ProviderRequestError) => e.status === 503 && e.message === 'Could not load OpenRouter models.');
+  fakeFetch(() => Response.json({}, { status: 403 }));
+  await assert.rejects(listOpenRouterModels('k'), (e: OpenRouterAuthenticationError) => e instanceof ProviderRequestError && e.name === 'OpenRouterAuthenticationError' && e.status === 403 && e.message === 'OpenRouter rejected this key. Reconnect your OpenRouter account.');
+});
+
+test('classifyProviderError sorts failures and never returns provider text', () => {
+  const secret = 'sk-secret-key';
+  const kind = (e: unknown) => classifyProviderError(e).kind;
+  assert.equal(kind(new ProviderRequestError(secret, 401)), 'auth');
+  assert.equal(kind(new ProviderRequestError(secret, 403)), 'auth');
+  assert.equal(kind(new ProviderRequestError(secret, 402)), 'quota');
+  assert.equal(kind(new ProviderRequestError(secret, 429)), 'quota');
+  assert.equal(kind(new ProviderRequestError(secret, 500)), 'unavailable');
+  assert.equal(kind(new OpenRouterAuthenticationError()), 'auth');
+  assert.equal(kind(Object.assign(new Error(secret), { status: 401 })), 'auth');
+  assert.equal(kind(new DOMException('x', 'AbortError')), 'aborted');
+  assert.equal(kind(new DOMException('x', 'TimeoutError')), 'aborted');
+  assert.equal(kind(new TypeError('fetch failed')), 'unavailable');
+  assert.equal(kind('boom'), 'unavailable');
+  assert.equal(kind(undefined), 'unavailable');
+  for (const e of [new ProviderRequestError(secret, 401), new ProviderRequestError(secret, 429), new Error(secret)]) assert.ok(!classifyProviderError(e).message.includes(secret));
 });
