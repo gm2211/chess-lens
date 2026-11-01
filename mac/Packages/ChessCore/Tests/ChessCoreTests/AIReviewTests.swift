@@ -133,10 +133,64 @@ final class AIResponseTests: XCTestCase {
         XCTAssertEqual(g?.concepts.count, 2)
         XCTAssertEqual(g?.concepts.first?.moves, ["9...Ke7"])
         XCTAssertEqual(g?.concepts.last?.name, "Loose pieces")
-        XCTAssertEqual(g?.turningPoint, "18")
+        XCTAssertEqual(g?.turningPoint, GameLesson.Example(move: "18"))
+        XCTAssertNil(g?.concepts.first?.examples.first?.why)
         XCTAssertEqual(g?.lessons.count, 3)
         XCTAssertEqual(g?.exercises.count, 1)
         XCTAssertEqual(g?.exercises.first?.fromMove, "9...Ke7")
+    }
+
+    func testGameLessonExamples() {
+        let text = """
+        {"concepts": [{"name": "Rapid development", "explanation": "White developed fast.",
+           "examples": [{"move": "11. Bxb5+", "why": "The bishop joins with check; Black's king is still in the centre.",
+                         "arrows": ["b5e8", "B5-D7", "zz99", "b5b5", {"from": "d1", "to": "d8"}, "a1a8"], "squares": ["e8", "E8", "k9", "d7", "c6", "b7", "a7"]},
+                        "6...Nf6", {"why": "no move"}]}],
+         "turningPoint": {"move": "13. Rxd7", "why": "The rook sacrifice tears open the d-file.", "arrows": ["d1d8"]}}
+        """
+        let g = GameLesson.parse(text)
+        let ex = g?.concepts.first?.examples ?? []
+        XCTAssertEqual(ex.count, 2)
+        XCTAssertEqual(ex[0].move, "11. Bxb5+")
+        XCTAssertEqual(ex[0].why, "The bishop joins with check; Black's king is still in the centre.")
+        // Invalid and same-square arrows dropped, at most 3 kept.
+        XCTAssertEqual(ex[0].arrows.map(\.uci), ["b5e8", "b5d7", "d1d8"])
+        // Invalid squares dropped, duplicates merged, at most 4 kept.
+        XCTAssertEqual(ex[0].squares.map(Sq.name), ["e8", "d7", "c6", "b7"])
+        XCTAssertEqual(ex[1], GameLesson.Example(move: "6...Nf6"))
+        XCTAssertEqual(g?.concepts.first?.moves, ["11. Bxb5+", "6...Nf6"])
+        XCTAssertEqual(g?.turningPoint?.move, "13. Rxd7")
+        XCTAssertEqual(g?.turningPoint?.arrows.map(\.uci), ["d1d8"])
+    }
+
+    func testGameLessonLegacyMoveObjects() {
+        // Older prompt key "moves" holding objects still reads.
+        let g = GameLesson.parse(#"{"concepts": [{"name": "Pins", "explanation": "x", "moves": [{"move": "9. Bg5", "why": "Pins the knight."}]}]}"#)
+        XCTAssertEqual(g?.concepts.first?.examples.first?.why, "Pins the knight.")
+        XCTAssertEqual(GameLesson.Example.Arrow("e2 e4")?.uci, "e2e4")
+        XCTAssertNil(GameLesson.Example.Arrow("e2e"))
+    }
+
+    func testGameLessonGrounded() {
+        let game = PGN.parse("1. e4 e5 2. Nf3 d6 3. d4 Bg4 4. dxe5 Bxf3 5. Qxf3 dxe5 6. Bc4 Nf6 7. Qb3 Qe7 8. Nc3 c6 9. Bg5 b5 10. Nxb5 cxb5 11. Bxb5+ Nbd7 12. O-O-O Rd8 1-0")[0].game
+        let allowed = Grounding.allowed(game.mainlineSAN)
+        let line = game.mainlineSAN
+        let lesson = GameLesson(
+            headline: "Morphy won. Then 30. Qh7 happened.",
+            concepts: [GameLesson.Concept(name: "Development", explanation: "Fast.", examples: [
+                GameLesson.Example(move: "11. Bxb5+", why: "Check with a developed piece. Not like 25. Qh7 at all."),
+                GameLesson.Example(move: "40. Kh1", why: "Not in the game."),
+                GameLesson.Example(move: "6...Nf6", why: "Only 25. Qh7 here."),
+            ])],
+            turningPoint: GameLesson.Example(move: "99. Ra1"))
+        let (g, unverified) = lesson.grounded(allowed: allowed) { Grounding.ply(of: $0, line: line) != nil }
+        let ex = g.concepts[0].examples
+        XCTAssertEqual(ex.map(\.move), ["11. Bxb5+", "6...Nf6"])
+        XCTAssertEqual(ex[0].why, "Check with a developed piece.")
+        XCTAssertNil(ex[1].why)
+        XCTAssertNil(g.turningPoint)
+        XCTAssertEqual(g.headline, "Morphy won.")
+        XCTAssertEqual(unverified, [])
     }
 
     func testGameLessonRawFallback() {
@@ -235,6 +289,9 @@ final class SummaryPromptTests: XCTestCase {
     func testSystemPrompts() {
         XCTAssertTrue(SummaryPrompt.system(tool: true).contains("<engine fen="))
         XCTAssertFalse(SummaryPrompt.system(tool: false).contains("<engine"))
+        let sys = SummaryPrompt.system(tool: false)
+        for key in [#""examples""#, #""why""#, #""arrows""#, #""squares""#] { XCTAssertTrue(sys.contains(key), key) }
+        XCTAssertFalse(sys.contains(#""moves": ["#))
         XCTAssertTrue(CoachPrompt.system(tool: false).contains("\"concept\""))
     }
 }

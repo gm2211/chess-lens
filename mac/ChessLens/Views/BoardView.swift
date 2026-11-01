@@ -6,7 +6,7 @@ struct BoardArrow: Equatable {
     var to: Square
     var rank: Int
     var kind: Kind = .engine
-    enum Kind { case engine, best, threat }
+    enum Kind { case engine, best, threat, lesson }
 }
 
 /// Maps squares to points for a board drawn with White (or Black) at the bottom.
@@ -62,8 +62,18 @@ struct BoardView: View {
         return out
     }
 
+    /// The summary example being illustrated here, if any (see `AppModel.showExample`).
+    private var lessonFocus: LessonFocus? {
+        guard !app.hidesEvaluation, let f = app.lessonFocus, f.nodeID == app.currentID else { return nil }
+        return f
+    }
+
     private var arrows: [BoardArrow] {
         if app.hidesEvaluation { return [] }
+        // An illustrated example owns the board: only its arrows, so the point isn't lost among engine lines.
+        if let f = lessonFocus, !f.arrows.isEmpty || !f.squares.isEmpty {
+            return f.arrows.map { BoardArrow(from: $0.from, to: $0.to, rank: 1, kind: .lesson) }
+        }
         let extra = reviewArrows
         var out = extra
         if app.engineEnabled, app.engine.linesFEN == app.position.fen, !app.review.running {
@@ -139,6 +149,12 @@ struct BoardView: View {
             ctx.fill(Path(g.rect(m.from)), with: .color(Theme.hlLast))
             ctx.fill(Path(g.rect(m.to)), with: .color(Theme.hlLast))
         }
+        // Squares a summary example points at
+        for sq in lessonFocus?.squares ?? [] {
+            let r = g.rect(sq)
+            ctx.fill(Path(r), with: .color(Theme.lesson.opacity(0.32)))
+            ctx.stroke(Path(r.insetBy(dx: cell * 0.04, dy: cell * 0.04)), with: .color(Theme.lesson.opacity(0.9)), lineWidth: cell * 0.07)
+        }
         if let s = selected { ctx.fill(Path(g.rect(s)), with: .color(Theme.hlSel)) }
         // Check
         if app.position.isCheck, let k = app.position.kingSquare(app.position.turn) {
@@ -199,8 +215,8 @@ struct BoardView: View {
             tri.addLine(to: CGPoint(x: base.x - uy * head * 0.55, y: base.y + ux * head * 0.55))
             tri.addLine(to: CGPoint(x: base.x + uy * head * 0.55, y: base.y - ux * head * 0.55))
             tri.closeSubpath()
-            let opacity = a.kind == .engine ? (a.rank == 1 ? 0.85 : (a.rank == 2 ? 0.55 : 0.38)) : 0.6
-            let color = a.kind == .threat ? Theme.blund : Theme.arrow
+            let opacity = a.kind == .engine ? (a.rank == 1 ? 0.85 : (a.rank == 2 ? 0.55 : 0.38)) : a.kind == .lesson ? 0.82 : 0.6
+            let color = a.kind == .threat ? Theme.blund : a.kind == .lesson ? Theme.lesson : Theme.arrow
             var layer = ctx
             layer.opacity = opacity
             layer.stroke(shaft, with: .color(color), style: StrokeStyle(lineWidth: width, lineCap: .round))

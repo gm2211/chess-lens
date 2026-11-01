@@ -91,12 +91,73 @@ public struct MomentLesson: Equatable, Sendable {
 
 /// The AI summary of a whole game, framed around what to learn from it.
 public struct GameLesson: Equatable, Sendable {
+    /// A cited move with the reason it shows the idea, and what to point at on the board after it.
+    public struct Example: Equatable, Sendable {
+        public static let maxArrows = 3
+        public static let maxSquares = 4
+
+        public var move: String          // "11. Bxb5+"
+        public var why: String?          // one sentence tying this move to the concept
+        public var arrows: [Arrow]       // drawn on the position after the move; visual only, not moves
+        public var squares: [Square]     // highlighted on the position after the move
+
+        public struct Arrow: Equatable, Sendable {
+            public var from: Square
+            public var to: Square
+            public init(from: Square, to: Square) { self.from = from; self.to = to }
+            /// "b5e8" (also "b5-e8", "b5 e8", "B5E8"); nil unless two different valid squares.
+            public init?(_ text: String) {
+                let t = text.lowercased().filter { $0.isLetter || $0.isNumber }
+                guard t.count == 4, let f = Sq.parse(String(t.prefix(2))), let to = Sq.parse(String(t.suffix(2))), f != to
+                else { return nil }
+                self.from = f; self.to = to
+            }
+            public var uci: String { Sq.name(from) + Sq.name(to) }
+        }
+
+        public init(move: String, why: String? = nil, arrows: [Arrow] = [], squares: [Square] = []) {
+            self.move = move; self.why = why
+            self.arrows = Self.unique(arrows, max: Self.maxArrows)
+            self.squares = Self.unique(squares, max: Self.maxSquares)
+        }
+
+        /// Reads either `{"move", "why", "arrows", "squares"}` or the older plain move string ("14. Qh5").
+        /// Arrows and squares that aren't valid squares are dropped.
+        static func parse(_ v: Any) -> Example? {
+            if let d = v as? [String: Any] {
+                guard let move = AIJSON.string(AIJSON.value(d, "move") ?? AIJSON.value(d, "ref") ?? AIJSON.value(d, "san"))
+                else { return nil }
+                let arrows = (AIJSON.value(d, "arrows") as? [Any] ?? []).compactMap { a -> Arrow? in
+                    if let s = AIJSON.string(a) { return Arrow(s) }
+                    if let o = a as? [String: Any], let f = AIJSON.string(AIJSON.value(o, "from")),
+                       let t = AIJSON.string(AIJSON.value(o, "to")) { return Arrow(f + t) }
+                    return nil
+                }
+                let squares = AIJSON.strings(AIJSON.value(d, "squares"))
+                    .compactMap { Sq.parse($0.lowercased().trimmingCharacters(in: .whitespaces)) }
+                return Example(move: move, why: AIJSON.string(AIJSON.value(d, "why")), arrows: arrows, squares: squares)
+            }
+            return AIJSON.string(v).map { Example(move: $0) }
+        }
+
+        private static func unique<T: Equatable>(_ xs: [T], max: Int) -> [T] {
+            var out: [T] = []
+            for x in xs where !out.contains(x) { out.append(x) }
+            return Array(out.prefix(max))
+        }
+    }
+
     public struct Concept: Equatable, Sendable {
         public var name: String
         public var explanation: String
-        public var moves: [String]       // move references, e.g. "14. Qh5"
-        public init(name: String, explanation: String, moves: [String] = []) {
-            self.name = name; self.explanation = explanation; self.moves = moves
+        public var examples: [Example]
+        /// The cited move references, e.g. "14. Qh5".
+        public var moves: [String] { examples.map(\.move) }
+        public init(name: String, explanation: String, examples: [Example] = []) {
+            self.name = name; self.explanation = explanation; self.examples = examples
+        }
+        public init(name: String, explanation: String, moves: [String]) {
+            self.init(name: name, explanation: explanation, examples: moves.map { Example(move: $0) })
         }
     }
     public struct Exercise: Equatable, Sendable {
@@ -114,12 +175,12 @@ public struct GameLesson: Equatable, Sendable {
     public var concepts: [Concept] = []
     public var white: String?
     public var black: String?
-    public var turningPoint: String?
+    public var turningPoint: Example?
     public var lessons: [String] = []
     public var exercises: [Exercise] = []
 
     public init(headline: String? = nil, story: String? = nil, concepts: [Concept] = [], white: String? = nil,
-                black: String? = nil, turningPoint: String? = nil, lessons: [String] = [], exercises: [Exercise] = []) {
+                black: String? = nil, turningPoint: Example? = nil, lessons: [String] = [], exercises: [Exercise] = []) {
         self.headline = headline; self.story = story; self.concepts = concepts; self.white = white
         self.black = black; self.turningPoint = turningPoint; self.lessons = lessons; self.exercises = exercises
     }
@@ -134,12 +195,15 @@ public struct GameLesson: Equatable, Sendable {
         g.story = AIJSON.string(AIJSON.value(o, "story")) ?? AIJSON.string(AIJSON.value(o, "arc"))
         g.white = AIJSON.string(AIJSON.value(o, "white"))
         g.black = AIJSON.string(AIJSON.value(o, "black"))
-        g.turningPoint = AIJSON.string(AIJSON.value(o, "turningPoint"))
+        g.turningPoint = AIJSON.value(o, "turningPoint").flatMap(Example.parse)
         g.lessons = Array(AIJSON.strings(AIJSON.value(o, "lessons") ?? AIJSON.value(o, "takeaways")).prefix(3))
         for c in (AIJSON.value(o, "concepts") as? [Any] ?? []).prefix(4) {
             if let d = c as? [String: Any], let name = AIJSON.string(AIJSON.value(d, "name")) {
+                // "examples" (current) or "moves" (older answers: plain strings, or objects).
+                let raw = AIJSON.value(d, "examples") ?? AIJSON.value(d, "moves")
+                let items: [Any] = raw as? [Any] ?? raw.map { [$0] } ?? []
                 g.concepts.append(Concept(name: name, explanation: AIJSON.string(AIJSON.value(d, "explanation")) ?? "",
-                                          moves: AIJSON.strings(AIJSON.value(d, "moves"))))
+                                          examples: items.compactMap(Example.parse)))
             } else if let s = AIJSON.string(c) {
                 g.concepts.append(Concept(name: s, explanation: ""))
             }
@@ -152,6 +216,39 @@ public struct GameLesson: Equatable, Sendable {
         }
         if g == GameLesson() { return GameLesson(story: stripFences(t)) }
         return g
+    }
+
+    /// Grounds the lesson against the game: prose sentences citing moves not in `allowed` are dropped (see
+    /// `Grounding.clean`; moves left only unverified are returned), move references `resolves` rejects are removed,
+    /// and an example's "why" loses any sentence citing an unsupported move.
+    public func grounded(allowed: Set<String>, resolves: (String) -> Bool) -> (lesson: GameLesson, unverified: [String]) {
+        var unverified: [String] = []
+        func c(_ s: String?) -> String? {
+            guard let s else { return nil }
+            let r = Grounding.clean(s, allowed: allowed)
+            for m in r.unverified where !unverified.contains(m) { unverified.append(m) }
+            return r.text
+        }
+        func ex(_ e: Example) -> Example? {
+            guard resolves(e.move) else { return nil }
+            var out = e
+            out.why = e.why.flatMap { w in
+                let p = Grounding.prune(w, allowed: allowed).text
+                return p.isEmpty ? nil : p
+            }
+            return out
+        }
+        var out = GameLesson(headline: c(headline), story: c(story), white: c(white), black: c(black))
+        out.turningPoint = turningPoint.flatMap(ex)
+        out.concepts = concepts.map {
+            Concept(name: c($0.name) ?? $0.name, explanation: c($0.explanation) ?? "", examples: $0.examples.compactMap(ex))
+        }
+        out.lessons = lessons.compactMap { c($0) }
+        out.exercises = exercises.map {
+            Exercise(title: c($0.title) ?? $0.title, fromMove: $0.fromMove.flatMap { resolves($0) ? $0 : nil },
+                     task: c($0.task) ?? $0.task, concept: $0.concept)
+        }
+        return (out, unverified)
     }
 }
 

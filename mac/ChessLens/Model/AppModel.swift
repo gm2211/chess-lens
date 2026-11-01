@@ -26,8 +26,14 @@ enum SampleGames {
 final class AppModel {
     // MARK: Game state
     private(set) var game: Game
-    private(set) var currentID = 0
-    private(set) var epoch = 0                       // bumps when a different game is loaded
+    private(set) var currentID = 0 {
+        didSet { if lessonFocus?.nodeID != currentID { lessonFocus = nil } }   // moving away ends the illustration
+    }
+    private(set) var epoch = 0 {                     // bumps when a different game is loaded
+        didSet { lessonFocus = nil }
+    }
+    /// A summary example being illustrated on the board: its caption under the board and its arrows/squares on it.
+    private(set) var lessonFocus: LessonFocus?
     var flipped = false
     /// Show the source's own comments, variations, glyphs and evals in the move list (not the app's review marks).
     var showSourceAnalysis = UserDefaults.standard.object(forKey: "showSourceAnalysis") as? Bool ?? true {
@@ -134,6 +140,17 @@ final class AppModel {
 
     func toggleFlip() { flipped.toggle(); persist() }
 
+    /// Goes to the position after an example's move and illustrates it; clicking the active example again clears it.
+    func showExample(_ e: GameLesson.Example, at id: Int, title: String) {
+        let focus = LessonFocus(nodeID: id, title: title, example: e)
+        if lessonFocus == focus { lessonFocus = nil; return }
+        goto(id)
+        guard currentID == id else { return }
+        lessonFocus = focus
+    }
+
+    func clearLessonFocus() { lessonFocus = nil }
+
     private func didMove() {
         refreshEngine()
         persist()
@@ -198,6 +215,7 @@ final class AppModel {
         layoutCache = [:]
         review.reset()
         ask.reset()
+        lessonFocus = nil
         currentID = cur
         didMove()
     }
@@ -396,4 +414,14 @@ final class AppModel {
         }
         return (g, cur, saved.flipped)
     }
+}
+
+/// A summary example shown on the board (see `AppModel.showExample`).
+struct LessonFocus: Equatable {
+    var nodeID: Int
+    var title: String                     // the concept name, or "Turning point"
+    var example: GameLesson.Example
+    var why: String? { example.why }
+    var arrows: [GameLesson.Example.Arrow] { example.arrows }
+    var squares: [Square] { example.squares }
 }

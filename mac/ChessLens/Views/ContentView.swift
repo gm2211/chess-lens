@@ -112,6 +112,9 @@ struct ContentView: View {
         if app.pendingImport != nil { return .ignored }       // the confirmation card owns the keyboard
         if press.modifiers.contains(.command) || press.modifiers.contains(.control) || press.modifiers.contains(.option) { return .ignored }
         switch press.key {
+        case .escape:
+            guard app.lessonFocus != nil else { return .ignored }
+            app.clearLessonFocus()
         case .leftArrow: app.back()
         case .rightArrow: app.forward()
         case .upArrow, .home: app.first()
@@ -159,6 +162,7 @@ struct BoardColumn: View {
             }
             NavigationRow()
             if let session = app.playSession { PlayBanner(session: session) }
+            LessonCaption()
             CoachBar()
         }
         .padding(.horizontal, 18)
@@ -204,6 +208,50 @@ private struct TurnDot: View {
             .frame(width: 11, height: 11)
             .help("\(name) to move")
             .accessibilityLabel("\(name) to move")
+    }
+}
+
+/// The "why" of the summary example being shown on the board, with its concept as a heading. Clears itself when
+/// the user moves to another position (see `AppModel.lessonFocus`), or with the close button / Escape.
+struct LessonCaption: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        Group {
+            if let f = app.lessonFocus, f.nodeID == app.currentID, !app.hidesEvaluation {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "lightbulb").font(.system(size: 10.5, weight: .semibold))
+                            Text(f.title.uppercased()).font(.system(size: 11, weight: .semibold)).tracking(0.7)
+                                .lineLimit(1)
+                            Text(moveLabel(app.game, f.nodeID)).font(.mono(11, weight: .semibold)).foregroundStyle(Theme.ink3)
+                        }
+                        .foregroundStyle(Theme.lesson)
+                        Text(f.why ?? "An example of this idea from the game.")
+                            .font(.system(size: 14)).foregroundStyle(f.why == nil ? Theme.ink3 : Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                    Button { app.clearLessonFocus() } label: {
+                        Image(systemName: "xmark").font(.system(size: 10.5, weight: .bold)).foregroundStyle(Theme.ink3)
+                            .frame(width: 20, height: 20).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Hide this explanation (Esc)")
+                    .accessibilityLabel("Hide explanation")
+                }
+                .padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 8)
+                .frame(minHeight: 44)
+                .frame(maxWidth: 520 + 36, alignment: .leading)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 4))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.line, lineWidth: 1))
+                .overlay(alignment: .leading) { Rectangle().fill(Theme.lesson).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 1.5)) }
+                .transition(.opacity)
+                .accessibilityElement(children: .contain)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: app.lessonFocus)
     }
 }
 

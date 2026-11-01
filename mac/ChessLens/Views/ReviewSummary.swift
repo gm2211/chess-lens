@@ -174,10 +174,11 @@ private struct SummaryHero: View {
                             Text(c.explanation).font(.system(size: 13)).foregroundStyle(Theme.ink2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        if !c.moves.isEmpty {
+                        if !c.examples.isEmpty {
+                            let title = c.name.prefix(1).uppercased() + c.name.dropFirst()
                             FlowLayout(spacing: 4, lineSpacing: 3) {
-                                ForEach(c.moves, id: \.self) { ref in
-                                    if let id = ai.node(for: ref) { MoveRefButton(id: id) }
+                                ForEach(Array(c.examples.enumerated()), id: \.offset) { _, e in
+                                    if let id = ai.node(for: e.move) { ExampleChip(id: id, example: e, title: title) }
                                 }
                             }
                         }
@@ -206,17 +207,7 @@ private struct SummaryHero: View {
         if let st = g.story {
             Text(st).font(.system(size: 12.5)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
         }
-        if let tp = g.turningPoint, let id = ai.node(for: tp) {
-            Button { app.goto(id) } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.turn.down.right").font(.system(size: 11, weight: .semibold))
-                    Text("Turning point: \(moveLabel(app.game, id))").font(.system(size: 12.5, weight: .semibold))
-                }
-                .foregroundStyle(Theme.accent).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Go to the move where the game turned")
-        }
+        if let tp = g.turningPoint, let id = ai.node(for: tp.move) { TurningPointButton(id: id, example: tp) }
         if let w = g.white { sideLine(dark: false, w) }
         if let b = g.black { sideLine(dark: true, b) }
         if !unverified.isEmpty {
@@ -238,21 +229,46 @@ private func sideLine(dark: Bool, _ text: String) -> some View {
     }
 }
 
-/// A move reference as a small pill that jumps to the move.
-private struct MoveRefButton: View {
+/// A concept's example move as a small pill: goes to the position after it and illustrates it on the board
+/// (caption under the board, arrows and squares on it). Selected while that illustration is showing.
+private struct ExampleChip: View {
     @Environment(AppModel.self) private var app
     let id: Int
-    var prefix: String = ""
+    let example: GameLesson.Example
+    let title: String
 
     var body: some View {
-        Button { app.goto(id) } label: {
-            Text(prefix + moveLabel(app.game, id)).font(.mono(12, weight: .semibold)).foregroundStyle(Theme.ink)
+        let active = app.lessonFocus == LessonFocus(nodeID: id, title: title, example: example)
+        Button { app.showExample(example, at: id, title: title) } label: {
+            Text(moveLabel(app.game, id)).font(.mono(12, weight: .semibold)).foregroundStyle(active ? Theme.lesson : Theme.ink)
                 .padding(.horizontal, 5).padding(.vertical, 1)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.line2, lineWidth: 1))
+                .background(active ? Theme.lesson.opacity(0.14) : Theme.surface, in: RoundedRectangle(cornerRadius: 3))
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(active ? Theme.lesson : Theme.line2, lineWidth: active ? 1.5 : 1))
         }
         .buttonStyle(.plain)
-        .help("Go to this move")
+        .help(example.why ?? "Go to this move")
+        .accessibilityAddTraits(active ? .isSelected : [])
+    }
+}
+
+/// "Turning point: 23\u{2026} Nf6": goes there and illustrates it like an example chip.
+private struct TurningPointButton: View {
+    @Environment(AppModel.self) private var app
+    let id: Int
+    let example: GameLesson.Example
+
+    var body: some View {
+        let active = app.lessonFocus == LessonFocus(nodeID: id, title: "Turning point", example: example)
+        Button { app.showExample(example, at: id, title: "Turning point") } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.turn.down.right").font(.system(size: 11, weight: .semibold))
+                Text("Turning point: \(moveLabel(app.game, id))").font(.system(size: 12.5, weight: .semibold))
+            }
+            .foregroundStyle(active ? Theme.lesson : Theme.accent).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(example.why ?? "Go to the move where the game turned")
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 }
 

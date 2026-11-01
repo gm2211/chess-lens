@@ -88,30 +88,13 @@ final class AISummary {
     private func attempt(_ input: Input, compact: Bool, tool: Bool) async throws -> GroundedAnswer {
         try await AIToolLoop.run(hub: hub, system: SummaryPrompt.system(tool: tool),
                                  prompt: SummaryPrompt.user(input.facts, compact: compact),
-                                 maxTokens: 700, allowed: input.allowed, tool: tool)
+                                 maxTokens: 1100, allowed: input.allowed, tool: tool)
     }
 
-    /// Grounds every prose field (see `Grounding.clean`) and drops move references that aren't in the game.
+    /// Grounds every prose field (see `GameLesson.grounded`) and drops move references that aren't in the game.
     private func clean(_ g: GameLesson, allowed: Set<String>) -> (GameLesson, [String]) {
-        var unverified: [String] = []
-        func c(_ s: String?) -> String? {
-            guard let s else { return nil }
-            let r = Grounding.clean(s, allowed: allowed)
-            for m in r.unverified where !unverified.contains(m) { unverified.append(m) }
-            return r.text
-        }
-        var out = GameLesson(headline: c(g.headline), story: c(g.story), white: c(g.white), black: c(g.black))
-        out.turningPoint = g.turningPoint.flatMap { node(for: $0) != nil ? $0 : nil }
-        out.concepts = g.concepts.map {
-            GameLesson.Concept(name: c($0.name) ?? $0.name, explanation: c($0.explanation) ?? "",
-                               moves: $0.moves.filter { node(for: $0) != nil })
-        }
-        out.lessons = g.lessons.compactMap { c($0) }
-        out.exercises = g.exercises.map {
-            GameLesson.Exercise(title: c($0.title) ?? $0.title, fromMove: $0.fromMove.flatMap { node(for: $0) != nil ? $0 : nil },
-                                task: c($0.task) ?? $0.task, concept: $0.concept)
-        }
-        return (out, unverified)
+        let r = g.grounded(allowed: allowed) { node(for: $0) != nil }
+        return (r.lesson, r.unverified)
     }
 
     // MARK: Input

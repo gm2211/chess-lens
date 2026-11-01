@@ -71,15 +71,27 @@ public enum SummaryPrompt {
         Reply with only a JSON object:
         {"headline": "1 sentence: the result and the story of the game",
         "story": "2-3 sentences: how the opening went, where the game turned, how it was won or lost",
-        "concepts": [{"name": "2-5 words, e.g. king safety, loose pieces, trading when ahead", "explanation": "1-2 sentences: what it means and how it showed up here", "moves": ["move refs like 14. Qh5 or 23...Nf6"]}],
+        "concepts": [{"name": "2-5 words, e.g. king safety, loose pieces, trading when ahead", "explanation": "1-2 sentences: what it means and how it showed up here", "examples": [\(example("a game move that clearly shows the concept, like 11. Bxb5+ or 23...Nf6"))]}],
         "white": "1 sentence on White's play, naming the strongest and weakest phase",
         "black": "1 sentence on Black's play, the same way",
-        "turningPoint": "the move where the game turned, like 23...Nf6",
+        "turningPoint": \(example("the move where the game turned, like 23...Nf6")),
         "lessons": ["a habit to build, phrased as an instruction"],
         "exercises": [{"title": "a few words", "fromMove": "a critical move ref; the position before it is the puzzle", "task": "what to find, e.g. Find a move that keeps your king safe", "concept": "the concept it trains"}]}
-        Give 2-4 concepts (causes, not moves), at most 3 lessons, 2-3 exercises. Cite only moves from the data or \
-        engine results, written as in the data (23...Nf6). Keep the whole answer under 250 words.
+        Give 2-4 concepts (causes, not moves), 1-3 examples per concept, at most 3 lessons, 2-3 exercises. \
+        Cite only moves from the data or engine results, written as in the data (23...Nf6).
+        The player clicks an example, sees the board after that move and reads its why, so pick moves that plainly \
+        show the concept on the board, not just moves from the same phase (for "moving the same piece twice", cite \
+        that piece's second move, not another piece's developing move). Write the why as teaching about this move, \
+        e.g. "Black's 6th move and still only one minor piece out; White already has four." Arrows (from and to \
+        square, like "b5e8") and squares point at what the why describes on the board after the move: the pinned \
+        piece, the loose piece, the open file, the exposed king. Leave them out when nothing helps. \
+        Keep the whole answer under 350 words.
         """ + (tool ? "\n" + EngineTool.instructions : "")
+    }
+
+    /// The JSON shape of one example: a concept's cited move, or the turning point.
+    static func example(_ move: String) -> String {
+        #"{"move": ""# + move + #"", "why": "1 short sentence tying THIS move to the concept, readable while looking at the board after it", "arrows": ["optional, at most 3, from+to squares like b5e8"], "squares": ["optional, at most 4 squares to highlight, like e8"]}"#
     }
 
     /// - Parameter compact: a shorter prompt for models with a small context (fewer moments, one eval per move, no FENs).
