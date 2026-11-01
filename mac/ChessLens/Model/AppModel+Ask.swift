@@ -1,4 +1,5 @@
 import Foundation
+import ChessCore
 
 /// Entry points for "Ask AI". The conversation itself lives in `AskAI`.
 extension AppModel {
@@ -30,6 +31,15 @@ extension AppModel {
 
     func sendAsk(_ question: String) {
         guard canAskAI else { return }
-        ask.ask(question, game: game, review: review, node: currentID)
+        ask.ask(question, game: game, review: review, node: currentID, live: liveEngineReport)
+    }
+
+    /// The live analysis of the current position when it is complete enough to ground an answer (depth 14 or more,
+    /// for this exact position, not shared with a running review); nil otherwise (Ask AI then runs its own search).
+    private var liveEngineReport: AskPrompt.EngineReport? {
+        guard engineEnabled, !review.running, engine.linesFEN == position.fen,
+              let top = engine.lines.first, top.depth >= AskAI.minLiveDepth else { return nil }
+        let lines = engine.lines.filter { $0.depth >= AskAI.minLiveDepth }.map { EngineToolLine(eval: $0.eval, pv: $0.pv) }
+        return AskPrompt.EngineReport(lines: lines, depth: top.depth)
     }
 }
