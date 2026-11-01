@@ -131,10 +131,7 @@ final class AppModel {
     }
 
     /// Shallow search results swing wildly; the bar ignores them (EvalBar holds the previous value meanwhile).
-    private var barMinDepth: Int {
-        let cap = engine.settings.config.depthCap
-        return cap == 0 ? 12 : min(12, cap)
-    }
+    private var barMinDepth: Int { 12 }
 
     var terminalEval: Eval? {
         switch game.gameEnd(at: currentID) {

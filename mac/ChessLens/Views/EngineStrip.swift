@@ -13,6 +13,7 @@ struct EngineStrip: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 summary(lines)
+                transport
                 gear
             }
             .padding(.horizontal, 14).padding(.vertical, 7)
@@ -54,7 +55,7 @@ struct EngineStrip: View {
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.ink3)
                         .rotationEffect(.degrees(expanded ? 90 : 0)).frame(width: 8)
                     EvalChip(eval: best.eval, compact: true)
-                    Text("d\(best.depth)").font(.mono(11.5, weight: .regular)).foregroundStyle(Theme.ink3)
+                    Text(app.engine.pauseReason == nil ? "d\(best.depth)" : pausedText(depth: best.depth)).font(.mono(11.5, weight: .regular)).foregroundStyle(Theme.ink3)
                     Text(best.text).font(.mono(12.5)).foregroundStyle(Theme.ink2)
                         .lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 0)
@@ -64,6 +65,8 @@ struct EngineStrip: View {
             .buttonStyle(.plain)
             .help(expanded ? "Hide the other engine lines" : "Show all engine lines (\(statText))")
             .accessibilityLabel("Engine: \(best.eval.display), depth \(best.depth), \(best.text)")
+        } else if app.engine.pauseReason != nil {
+            status("pause.circle", pausedText(depth: nil))
         } else {
             HStack(spacing: 8) {
                 Color.clear.frame(width: 8, height: 20)
@@ -86,11 +89,40 @@ struct EngineStrip: View {
         .help(text)
     }
 
+    /// "Paused" / "Paused — Mac is hot" while analysis is stopped for the position on the board.
+    private func pausedText(depth: Int?) -> String {
+        switch app.engine.pauseReason {
+        case .cool(let r)?: depth.map { "\(r.message) \u{00B7} d\($0)" } ?? r.message
+        default: depth.map { "Paused at d\($0)" } ?? "Paused"
+        }
+    }
+
+    /// Stop while searching, Continue while paused.
+    @ViewBuilder
+    private var transport: some View {
+        if app.engineEnabled, app.engine.isAvailable, !app.review.running, app.game.gameEnd(at: app.currentID) == nil {
+            if app.engine.pauseReason != nil {
+                Button { app.engine.resume() } label: {
+                    Label("Continue", systemImage: "play.fill").font(.system(size: 11.5, weight: .medium))
+                }
+                .buttonStyle(.borderless).foregroundStyle(Theme.accent)
+                .help("Continue analysing this position")
+            } else if app.engine.searching {
+                Button { app.engine.pause() } label: {
+                    Image(systemName: "pause.fill").font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.ink2).frame(width: 24, height: 22)
+                }
+                .buttonStyle(.borderless)
+                .help("Stop analysing this position and keep the lines")
+                .accessibilityLabel("Pause analysis")
+            }
+        }
+    }
+
     private var gear: some View {
-        let custom = settings.config.preset == .custom
-        return Button { showSettings.toggle() } label: {
+        Button { showSettings.toggle() } label: {
             Image(systemName: "gearshape").font(.system(size: 13, weight: .medium))
-                .foregroundStyle(custom ? Theme.accent : Theme.ink2)
+                .foregroundStyle(Theme.ink2)
                 .frame(width: 26, height: 22)
         }
         .buttonStyle(.borderless)
@@ -103,7 +135,7 @@ struct EngineStrip: View {
     private var footerText: String {
         let c = settings.config
         let lines = "\(c.lines) line\(c.lines == 1 ? "" : "s")"
-        return c.depthCap == 0 ? "\(lines), no depth limit" : "\(lines), up to depth \(c.depthCap)"
+        return "\(lines), \(c.threads) thread\(c.threads == 1 ? "" : "s")"
     }
 
     private var statText: String {
