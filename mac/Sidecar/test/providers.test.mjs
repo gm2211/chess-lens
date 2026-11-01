@@ -120,6 +120,9 @@ for (const id of ['claudeAPI', 'openrouter', 'groq', 'huggingface', 'grok']) {
     await handle({ id: 3, type: 'complete', provider: id, model: 'b', system: 'sys', prompt: 'p', maxTokens: 30 });
     assert.deepEqual(out.filter(o => o.id === 3 && o.delta).map(o => o.delta), ['He', 'llo']);
     assert.equal(out.at(-1).text, 'Hello');
+    // The model's reasoning delta reached the app as a heartbeat, never as text.
+    assert.ok(out.some(o => o.id === 3 && o.thinking === true));
+    assert.ok(!out.some(o => o.id === 3 && o.delta === 'hmm'));
     const sent = fakes[fake].calls.stream[0];
     assert.equal(sent.token, KEY); assert.equal(sent.req.model, 'b');
     assert.deepEqual(sent.req.messages.map(m => m.role), ['system', 'user']);

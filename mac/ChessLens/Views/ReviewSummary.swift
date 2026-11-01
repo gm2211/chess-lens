@@ -129,10 +129,7 @@ private struct SummaryHero: View {
                 setupHint
             }
         case .loading?:
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(ai.switchNote ?? "Writing your lesson\u{2026}").font(.system(size: 13)).foregroundStyle(Theme.ink3)
-            }
+            AIWaitingLabel(note: ai.switchNote, size: 13)
             VStack(alignment: .leading, spacing: 7) {
                 ForEach([0.9, 1.0, 0.75, 0.55], id: \.self) { w in
                     GeometryReader { g in

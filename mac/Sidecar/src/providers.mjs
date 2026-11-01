@@ -5,7 +5,7 @@
 //   signIn({apiKey, mode, emit, signal}) -> {awaitingCode?}           (emit(url, extra) reports a URL to open)
 //   submitCode(code)           paste-code fallback (Claude only)
 //   signOut()
-//   complete({model, system, prompt, maxTokens, signal, onDelta, onProgress}) -> {text, streamed}
+//   complete({model, system, prompt, maxTokens, signal, onDelta, onProgress, onThinking}) -> {text, streamed}
 // Keys and tokens live only in the Keychain (via `vault`) and never appear in a reply.
 import { PublicError, SAFE_NAMES } from './errors.mjs';
 import { deviceSignIn, refresh as refreshGrok } from './grok-oauth.mjs';
@@ -131,13 +131,14 @@ export function createProviders({ chatgpt, claude, byos, vault, fetch: fetcher =
         return {};
       },
       async signOut() { await store.delete(); },
-      async complete({ model, system, prompt, maxTokens, signal, onDelta }) {
+      async complete({ model, system, prompt, maxTokens, signal, onDelta, onThinking }) {
         const key = await credential(signal);
         const sys = system ? (id === 'claudeAPI' ? system : hint(system, maxTokens)) : hint('', maxTokens);
         let text = '';
         try {
           for await (const ev of provider.stream(key, { model, signal, messages: [...(sys ? [{ role: 'system', content: sys }] : []), { role: 'user', content: prompt }] })) {
             if (ev.type === 'text') { text += ev.text; onDelta?.(ev.text); }
+            else if (ev.type === 'reasoning') onThinking?.();   // the model is working; the app counts it as activity
           }
         } catch (e) { throw wrap(e, [key], signal); }
         return { text, streamed: true };

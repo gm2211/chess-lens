@@ -1,4 +1,5 @@
 import SwiftUI
+import ChessCore
 
 /// What every AI surface (lesson card, moment note, Ask drawer) shows when a request failed or timed out: the reason
 /// in plain words, then Try again and a menu to switch to another signed-in model. Switching retries on its own
@@ -42,5 +43,27 @@ struct SwitchModelMenu: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Use another AI model; this request starts over with it")
+    }
+}
+
+/// The "waiting for the model" line of every AI surface: a spinner, "Grok is thinking…" (or `note`, such as a model
+/// switch) and, after a few seconds, how long it has been. Reasoning models can think for a minute or two before
+/// their first word; the counter shows the app is still waiting rather than frozen.
+struct AIWaitingLabel: View {
+    var note: String?
+    var size: CGFloat = 12.5
+    @State private var since = Date()
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            TimelineView(.periodic(from: since, by: 1)) { ctx in
+                let seconds = max(0, Int(ctx.date.timeIntervalSince(since)))
+                Text(AIWaitText.line(note: note, provider: AIHub.shared.selected.displayName, seconds: seconds))
+                    .font(.system(size: size)).foregroundStyle(Theme.ink3)
+                    .monospacedDigit()
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }

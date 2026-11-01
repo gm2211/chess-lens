@@ -237,13 +237,18 @@ final class AIHub {
     // MARK: Completion
 
     /// Streams the selected provider's answer as text chunks. Cancelling the consumer cancels the request. Fails with
-    /// `AITimedOut` (and cancels the request) when nothing arrives for `inactivity`, or after `overall`.
+    /// `AITimedOut` (and cancels the request) when nothing arrives for `timeout.firstChunk` (before the first word;
+    /// reasoning models think silently), `timeout.inactivity` (once streaming), or `overall`. Thinking events from the
+    /// sidecar count as activity but are not text.
     func complete(system: String, prompt: String, maxTokens: Int?,
-                  inactivity: Duration = AITimeout.note.inactivity, overall: Duration? = nil) -> AsyncThrowingStream<String, Error> {
+                  timeout: AITimeout = .note, overall: Duration? = nil) -> AsyncThrowingStream<String, Error> {
+        let beat = AIHeartbeat()
         let raw = selected == .apple
             ? AppleIntelligence.stream(system: system, prompt: prompt, maxTokens: maxTokens)
-            : sidecar.complete(provider: selected.rawValue, model: model, system: system, prompt: prompt, maxTokens: maxTokens)
-        return withInactivityTimeout(raw, inactivity: inactivity, overall: overall)
+            : sidecar.complete(provider: selected.rawValue, model: model, system: system, prompt: prompt, maxTokens: maxTokens,
+                               onThinking: { beat.pulse() })
+        return withInactivityTimeout(raw, firstChunk: timeout.firstChunk, inactivity: timeout.inactivity,
+                                     overall: overall ?? timeout.overall, heartbeat: beat)
     }
 
     /// Plain words for why a request failed: "Grok didn't respond.", "The request was cancelled."

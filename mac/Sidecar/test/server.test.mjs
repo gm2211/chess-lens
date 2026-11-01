@@ -67,6 +67,12 @@ test('streaming adapters forward their own deltas without replay', async () => {
   assert.deepEqual(out, [{ id: 2, delta: 'a' }, { id: 2, delta: 'b' }, { id: 2, done: true, text: 'ab' }]);
 });
 
+test('thinking heartbeats are throttled to one a second', async () => {
+  const { out, handle } = setup({ complete: async ({ onThinking }) => { for (let i = 0; i < 50; i++) onThinking(); return { text: 'x', streamed: true }; } });
+  await handle({ id: 7, type: 'complete', provider: 'fake', system: '', prompt: 'p', model: 'm' });
+  assert.equal(out.filter(o => o.thinking).length, 1);
+});
+
 test('signIn reports the URL (and user code), then status; awaitingCode is passed through', async () => {
   const { out, handle } = setup({ signIn: async ({ emit }) => { emit('http://127.0.0.1:1/auth', { userCode: 'AB-12' }); return { awaitingCode: true }; } });
   await handle({ id: 3, type: 'signIn', provider: 'fake' });
