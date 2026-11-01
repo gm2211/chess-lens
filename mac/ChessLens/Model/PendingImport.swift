@@ -96,7 +96,7 @@ enum LinkFetcher {
 
     static func fetch(_ link: GameLink) async throws -> Result {
         var req = URLRequest(url: link.fetchURL, timeoutInterval: 10)
-        req.setValue("ChessLens/1.0", forHTTPHeaderField: "User-Agent")
+        req.setValue("Etude/1.0", forHTTPHeaderField: "User-Agent")
         if let accept = link.accept { req.setValue(accept, forHTTPHeaderField: "Accept") }
 
         let config = URLSessionConfiguration.ephemeral

@@ -1,4 +1,4 @@
-// Request handler for the Chess Lens sidecar. Pure of stdio so tests can inject fake providers.
+// Request handler for the Étude sidecar. Pure of stdio so tests can inject fake providers.
 //
 // Wire protocol (one JSON object per line, both directions). Every command except ping/probe/cancel/providers
 // takes `provider` (chatgpt | claude | claudeAPI | openrouter | grok | groq | huggingface):
