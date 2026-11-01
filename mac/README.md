@@ -44,6 +44,7 @@ Swift sees account labels, model ids and generated text. Key providers are valid
 ```sh
 mac/scripts/build-sidecar.sh          # fetches Node 24.22.1 (sha256 + Node.js Foundation signature checked), npm ci, tests, bundles to mac/vendor/sidecar
 mac/scripts/check-sidecar-sandbox.sh  # optional: drives the real LLMSidecar.swift under the App Sandbox (no UI, no real sign-in)
+mac/scripts/check-play-engine.sh      # optional: drives the real UCIEngine.swift like play mode (games, rapid cancels, restart) beside idle engines
 ```
 
 The "Embed LLM sidecar" build phase (`scripts/embed-sidecar.sh`) copies `Helpers/sidecar-node` (signed with

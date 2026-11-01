@@ -5,20 +5,30 @@ import ChessCore
 /// What the player picked in the setup sheet. Strength, think time and the hide-evaluation switch are remembered.
 struct PlaySetup: Equatable {
     var userSide: Side
-    var strength: PlayStrength = .club
+    var strength = PlayStrength(elo: 1800)
+    /// Only used at full strength; below it the search time is derived from the Elo (`PlayStrength.limitedMoveTime`).
     var thinkMillis = 1000
     var hideEvaluation = true
 
     static let thinkChoices = [500, 1000, 3000]
 
+    /// How long the engine searches for this setup.
+    var moveTime: Int { strength.moveTime(fullStrengthMillis: thinkMillis) }
+
     private enum Key {
-        static let strength = "play.strength", think = "play.thinkMillis", hide = "play.hideEvaluation"
+        /// Saved Elo; 0 means full strength. Replaces the old preset name under `legacyStrength`.
+        static let elo = "play.elo", legacyStrength = "play.strength"
+        static let think = "play.thinkMillis", hide = "play.hideEvaluation"
     }
 
     static func saved(side: Side) -> PlaySetup {
         let d = UserDefaults.standard
         var s = PlaySetup(userSide: side)
-        if let raw = d.string(forKey: Key.strength), let v = PlayStrength(rawValue: raw) { s.strength = v }
+        if let elo = d.object(forKey: Key.elo) as? Int {
+            s.strength = elo == 0 ? .full : PlayStrength(elo: elo)
+        } else if let raw = d.string(forKey: Key.legacyStrength), let v = PlayStrength(legacyPreset: raw) {
+            s.strength = v
+        }
         let ms = d.integer(forKey: Key.think)
         if thinkChoices.contains(ms) { s.thinkMillis = ms }
         if let h = d.object(forKey: Key.hide) as? Bool { s.hideEvaluation = h }
@@ -27,7 +37,8 @@ struct PlaySetup: Equatable {
 
     func save() {
         let d = UserDefaults.standard
-        d.set(strength.rawValue, forKey: Key.strength)
+        d.set(strength.elo ?? 0, forKey: Key.elo)
+        d.removeObject(forKey: Key.legacyStrength)
         d.set(thinkMillis, forKey: Key.think)
         d.set(hideEvaluation, forKey: Key.hide)
     }
@@ -68,22 +79,29 @@ final class PlaySession {
 
     // MARK: State
 
+    /// The app while this session is still its session and `tip` still indexes its game. SwiftUI can evaluate a
+    /// banner holding an ended session after the game was replaced (New Game), when `tip`/`anchor` are stale.
+    private var liveApp: AppModel? {
+        guard let app, app.playSession === self, app.game.nodes.indices.contains(tip) else { return nil }
+        return app
+    }
+
     var userSide: Side { setup.userSide }
     var isActive: Bool { ending == nil && failure == nil }
-    var isPaused: Bool { isActive && app?.currentID != tip }
-    private var tipTurn: Side? { app?.game.nodes[tip].position.turn }
+    var isPaused: Bool { isActive && liveApp.map { $0.currentID != tip } ?? false }
+    private var tipTurn: Side? { liveApp?.game.nodes[tip].position.turn }
     var isUserTurn: Bool { isActive && !isPaused && tipTurn == userSide }
     /// The board takes input only on the user's turn (the engine's own move passes through too).
     var acceptsInput: Bool { isUserTurn || enginePlaying }
     /// Eval bar, engine lines and arrows stay hidden until the game ends.
     var hidesEvaluation: Bool { setup.hideEvaluation && isActive }
     var canTakeBack: Bool {
-        guard let app else { return false }
+        guard let app = liveApp else { return false }
         return app.game.takeBackTarget(from: tip, userSide: userSide, anchor: anchor) != nil
     }
 
     var headline: String {
-        "Playing Stockfish \u{00B7} \(setup.strength.detail) \u{00B7} You\u{2019}re \(userSide == .white ? "White" : "Black")"
+        "Playing \(setup.strength.title) \u{00B7} You\u{2019}re \(userSide == .white ? "White" : "Black")"
     }
 
     var resultText: String? {
@@ -109,11 +127,11 @@ final class PlaySession {
     /// The app calls this when a move was accepted from the live tip.
     func noteMove(to id: Int) {
         tip = id
-        if let end = app?.game.gameEnd(at: id) { finish(.game(end)) }
+        if let end = liveApp?.game.gameEnd(at: id) { finish(.game(end)) }
     }
 
     func resume() {
-        guard let app, isActive else { return }
+        guard let app, app.playSession === self, isActive else { return }
         tip = app.currentID
         anchor = tip
         if let end = app.game.gameEnd(at: tip) { finish(.game(end)); return }
@@ -121,7 +139,7 @@ final class PlaySession {
     }
 
     func takeBack() {
-        guard let app, let target = app.game.takeBackTarget(from: tip, userSide: userSide, anchor: anchor) else { return }
+        guard let app = liveApp, let target = app.game.takeBackTarget(from: tip, userSide: userSide, anchor: anchor) else { return }
         cancelThinking()
         let wasOver = !isActive
         ending = nil; failure = nil
@@ -146,7 +164,7 @@ final class PlaySession {
 
     private func drive() {
         cancelThinking()
-        guard isActive, let app, app.currentID == tip else { return }
+        guard isActive, let app = liveApp, app.currentID == tip else { return }
         if let end = app.game.gameEnd(at: tip) { finish(.game(end)); return }
         guard app.game.nodes[tip].position.turn != userSide else { return }
         thinking = true
@@ -160,6 +178,9 @@ final class PlaySession {
         thinking = false
     }
 
+    /// A search that has not answered within its move time plus this is treated as stuck.
+    private static let watchdogMargin = Duration.seconds(5)
+
     private func think() async {
         guard let app else { return }
         let from = tip
@@ -167,17 +188,16 @@ final class PlaySession {
         let clock = ContinuousClock()
         let started = clock.now
         do {
-            try await engine.start()
-            if !prepared {
-                await engine.setUCIOptions(setup.strength.uciOptions)
-                prepared = true
-            }
-            let stream = try await engine.search(fen: position.fen, limit: .moveTime(setup.thinkMillis), multiPV: 1)
             var best: String?
-            for await event in stream {
-                if case .finished(let move, let completed) = event, completed { best = move }
+            // One retry on a fresh engine process if the first search never answers.
+            for attempt in 1...2 {
+                let (move, stalled) = try await bestMove(position)
+                if Task.isCancelled { return }
+                best = move
+                if move != nil || !stalled { break }
+                engineLog.error("play search stalled (attempt \(attempt)); engine restarted")
+                if attempt == 2 { fail("Stockfish stopped responding. Take back or stop and play again."); return }
             }
-            if Task.isCancelled { return }
             guard let best, let move = position.move(fromUCI: best) else {
                 fail("The engine did not return a move.")
                 return
@@ -186,7 +206,8 @@ final class PlaySession {
             let minimum = Duration.milliseconds(300)
             let elapsed = started.duration(to: clock.now)
             if elapsed < minimum { try? await Task.sleep(for: minimum - elapsed) }
-            guard !Task.isCancelled, isActive, tip == from, app.currentID == from else { return }
+            guard !Task.isCancelled else { return }
+            guard isActive, tip == from, app.currentID == from else { thinking = false; return }
             thinking = false
             enginePlaying = true
             app.play(move)
@@ -194,6 +215,36 @@ final class PlaySession {
         } catch {
             if !Task.isCancelled { fail(error.localizedDescription) }
         }
+    }
+
+    /// One search for `position`, watched: past the move time plus `watchdogMargin` the engine process is restarted,
+    /// which ends the wait. `stalled` says the watchdog fired.
+    private func bestMove(_ position: Position) async throws -> (move: String?, stalled: Bool) {
+        let engine = engine
+        let moveTime = setup.moveTime
+        let watchdog = Task { () -> Bool in
+            do { try await Task.sleep(for: .milliseconds(moveTime) + Self.watchdogMargin) } catch { return false }
+            await engine.restart()
+            return true
+        }
+        var best: String?
+        do {
+            try await engine.start()
+            if !prepared {
+                await engine.setUCIOptions(setup.strength.uciOptions)
+                prepared = true
+            }
+            let stream = try await engine.search(fen: position.fen, limit: .moveTime(moveTime), multiPV: 1)
+            for await event in stream {
+                if case .finished(let move, let completed) = event, completed { best = move }
+            }
+        } catch {
+            watchdog.cancel()
+            if await watchdog.value { return (nil, true) }
+            throw error
+        }
+        watchdog.cancel()
+        return (best, await watchdog.value)
     }
 
     private func fail(_ message: String) {
