@@ -30,6 +30,9 @@ final class EngineController {
     private(set) var depth = 0
     private(set) var nps = 0
     private(set) var searching = false
+    /// Why live analysis is not running for the position on the board (nil while it searches).
+    enum PauseReason: Equatable { case manual, cool(CoolDownReason) }
+    private(set) var pauseReason: PauseReason?
 
     var isAvailable: Bool { engine != nil }
 
@@ -40,6 +43,9 @@ final class EngineController {
     private let engine: UCIEngine?
     private var liveTask: Task<Void, Never>?
     private var liveGeneration = 0
+    private var coolDown = CoolDown()
+    private var pausedKeys: Set<String> = []       // positions the user stopped by hand (cache keys)
+    private var currentKey: String?
 
     // Smooth publishing: lines change once per completed depth, throttled, never regress below a stronger cached result.
     private struct CachedEval {
@@ -70,11 +76,61 @@ final class EngineController {
         engine = executableURL.map { UCIEngine(executableURL: $0, threads: c.threads, hash: c.hash) }
         if engine == nil { status = .failed("The Stockfish engine is missing from this build.") }
         settings.onChange = { [weak self] old, new in self?.settingsChanged(old, new) }
+        updateCoolDown()
+        for name in [ProcessInfo.thermalStateDidChangeNotification, Notification.Name.NSProcessInfoPowerStateDidChange] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.heatChanged() }
+            }
+        }
+    }
+
+    // MARK: Pause / continue
+
+    private func updateCoolDown() {
+        let info = ProcessInfo.processInfo
+        let level: ThermalLevel
+        switch info.thermalState {
+        case .nominal: level = .nominal
+        case .fair: level = .fair
+        case .serious: level = .serious
+        case .critical: level = .critical
+        @unknown default: level = .serious
+        }
+        coolDown.update(thermal: level, lowPower: info.isLowPowerModeEnabled, enabled: settings.config.pauseWhenHot)
+    }
+
+    private func heatChanged() {
+        let before = coolDown.reason
+        updateCoolDown()
+        if coolDown.reason != before { onSettingsApplied?() }
+    }
+
+    /// Stops the search for the position on the board and freezes its lines until `resume()`.
+    func pause() {
+        guard let engine, let key = currentKey, searching else { return }
+        flushPending(cfg: settings.config, force: true)
+        pausedKeys.insert(key)
+        liveTask?.cancel()
+        liveGeneration += 1
+        searching = false
+        pauseReason = .manual
+        liveTask = Task { await engine.stop() }
+    }
+
+    /// Continue button: lifts the manual pause on this position, or overrides the cool-down pause.
+    func resume() {
+        switch pauseReason {
+        case .manual?: if let currentKey { pausedKeys.remove(currentKey) }
+        case .cool?: coolDown.continueAnyway()
+        case nil: return
+        }
+        onSettingsApplied?()
     }
 
     private func settingsChanged(_ old: EngineConfig, _ new: EngineConfig) {
         if new.lines < old.lines { lines.removeAll { $0.rank > new.lines } }
-        if new.lines != old.lines || new.depthCap != old.depthCap { cache.removeAll(); cacheOrder.removeAll() }
+        if new.lines != old.lines { cache.removeAll(); cacheOrder.removeAll(); pausedKeys.removeAll() }
+        if new.pauseWhenHot != old.pauseWhenHot { updateCoolDown() }
         guard let engine else { return }
         Task { [weak self] in
             await engine.setOptions(threads: new.threads, hash: new.hash)
@@ -106,9 +162,15 @@ final class EngineController {
                 lines = []; depth = 0; shownKey = nil; shownNodes = 0; shownDepth = 0; shownLineCount = 0
             }
         }
-        // Already searched at least as deep as the budget with the full line count: nothing more to learn.
-        if cfg.depthCap > 0, let hit = cache[key], hit.depth >= cfg.depthCap,
-           hit.lines.count >= min(cfg.lines, position.legalMoves().count) {
+        currentKey = key
+        if let cool = coolDown.reason {
+            pauseReason = .cool(cool)
+        } else if pausedKeys.contains(key) {
+            pauseReason = .manual
+        } else {
+            pauseReason = nil
+        }
+        if pauseReason != nil {
             searching = false
             liveTask = Task { await engine.stop() }
             return
@@ -126,7 +188,7 @@ final class EngineController {
         if status == .idle { status = .starting }
         let cfg = settings.config
         do {
-            let stream = try await engine.search(fen: history?.rootFEN ?? fen, moves: history?.moves ?? [], limit: .infinite(depthCap: cfg.depthCap == 0 ? .max : cfg.depthCap), multiPV: cfg.lines)
+            let stream = try await engine.search(fen: history?.rootFEN ?? fen, moves: history?.moves ?? [], limit: .infinite(depthCap: .max), multiPV: cfg.lines)
             if gen != liveGeneration { return }
             status = .running
             if linesFEN != fen { linesFEN = fen }
@@ -173,6 +235,7 @@ final class EngineController {
 
     private func finish(fen: String, engine: UCIEngine) {
         flushTask?.cancel(); pending = nil
+        pauseReason = nil; currentKey = nil
         lines = []; linesFEN = fen; depth = 0; nps = 0; searching = false; shownKey = nil; shownNodes = 0; shownDepth = 0; shownLineCount = 0
         liveTask = Task { await engine.stop() }
     }
@@ -234,6 +297,7 @@ final class EngineController {
         liveTask?.cancel()
         liveGeneration += 1
         searching = false
+        pauseReason = nil
         if let engine { liveTask = Task { await engine.stop() } }
     }
 
@@ -280,5 +344,5 @@ final class EngineController {
 
     func shutdown() async { await engine?.shutdown() }
 
-    func newGame() { cache.removeAll(); cacheOrder.removeAll(); if let engine { Task { await engine.newGame() } } }
+    func newGame() { cache.removeAll(); cacheOrder.removeAll(); pausedKeys.removeAll(); if let engine { Task { await engine.newGame() } } }
 }
