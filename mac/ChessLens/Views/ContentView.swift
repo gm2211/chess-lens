@@ -25,6 +25,12 @@ struct ContentView: View {
             .navigationSubtitle(app.subtitle)
             .toolbar { toolbar }
             .sheet(isPresented: $app.showImport) { ImportSheet() }
+            .alert("Clear \(app.exploredCount) explored moves?", isPresented: $app.confirmClearExplored) {
+                Button("Clear", role: .destructive) { app.clearExploredLines() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes the lines you played yourself. The game and its own variations stay.")
+            }
             .sheet(isPresented: $app.showPlaySetup, onDismiss: { focused = true }) { PlaySetupSheet() }
             .fileImporter(isPresented: $app.showFileImporter, allowedContentTypes: ImportSheet.pgnTypes) { result in
                 if case .success(let url) = result { app.handleFileURL(url) }

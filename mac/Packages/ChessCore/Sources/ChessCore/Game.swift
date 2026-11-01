@@ -10,10 +10,14 @@ public struct GameNode: Sendable, Identifiable, Equatable {
     public var comment: String?
     public var nags: [Int]
     public var children: [Int]              // children[0] is the main continuation
+    /// Whether the user played this move themselves (on the board, from the engine, in a play session) as
+    /// opposed to it coming from the imported game or setup. "Clear explored lines" removes only these.
+    public var explored: Bool
 
-    public init(id: Int, parent: Int?, move: Move?, san: String, position: Position, comment: String? = nil, nags: [Int] = [], children: [Int] = []) {
+    public init(id: Int, parent: Int?, move: Move?, san: String, position: Position, comment: String? = nil, nags: [Int] = [], children: [Int] = [], explored: Bool = false) {
         self.id = id; self.parent = parent; self.move = move; self.san = san
         self.position = position; self.comment = comment; self.nags = nags; self.children = children
+        self.explored = explored
     }
 
     /// Ply number of the move leading to this node, derived from the position (1 = White's first move).
@@ -51,15 +55,16 @@ public struct Game: Sendable, Equatable {
         else { headers.append((key, value)) }
     }
 
-    /// Adds `move` after `node`, reusing an existing identical child. Returns the child id.
+    /// Adds `move` after `node`, reusing an existing identical child (which keeps its own `explored` flag).
+    /// Importers leave `explored` false; interactive play passes true. Returns the child id.
     @discardableResult
-    public mutating func addMove(_ move: Move, after node: Int) throws -> Int {
+    public mutating func addMove(_ move: Move, after node: Int, explored: Bool = false) throws -> Int {
         if let existing = nodes[node].children.first(where: { nodes[$0].move == move }) { return existing }
         let pos = nodes[node].position
         let san = pos.san(move)
         let next = try pos.applying(move)
         let id = nodes.count
-        nodes.append(GameNode(id: id, parent: node, move: move, san: san, position: next))
+        nodes.append(GameNode(id: id, parent: node, move: move, san: san, position: next, explored: explored))
         nodes[node].children.append(id)
         return id
     }
@@ -101,7 +106,63 @@ public struct Game: Sendable, Equatable {
         compact()
     }
 
-    mutating func compact() {
+    /// How many moves `clearExplored()` would remove: every explored move and whatever follows it.
+    public var exploredCount: Int {
+        var n = 0
+        var stack = [0]
+        while let c = stack.popLast() {
+            for k in nodes[c].children {
+                if nodes[k].explored { n += subtreeSize(k) } else { stack.append(k) }
+            }
+        }
+        return n
+    }
+
+    private func subtreeSize(_ node: Int) -> Int {
+        var n = 0
+        var stack = [node]
+        while let c = stack.popLast() { n += 1; stack.append(contentsOf: nodes[c].children) }
+        return n
+    }
+
+    /// Removes every move the user explored (with the moves after it), wherever it sits, including explored
+    /// moves that continue past the imported game's last move. Imported moves and variations stay, and
+    /// ids are rebuilt. Returns how many moves went and where each survivor's id moved (old → new).
+    @discardableResult
+    public mutating func clearExplored() -> (removed: Int, remap: [Int: Int]) {
+        let before = nodes.count
+        for i in nodes.indices where nodes[i].explored {
+            if let p = nodes[i].parent { nodes[p].children.removeAll { $0 == i } }
+        }
+        let remap = compact()
+        return (before - nodes.count, remap)
+    }
+
+    /// The explored flags in a persisted form: one "0"/"1" per move, depth-first in children order (the order
+    /// PGN export writes and parsing rebuilds), root excluded.
+    public var exploredSignature: String {
+        var out = ""
+        var stack = [0]
+        while let c = stack.popLast() {
+            if c != 0 { out.append(nodes[c].explored ? "1" : "0") }
+            stack.append(contentsOf: nodes[c].children.reversed())
+        }
+        return out
+    }
+
+    /// Restores flags saved by `exploredSignature`; ignored when it doesn't match this tree's size.
+    public mutating func applyExploredSignature(_ sig: String) {
+        guard sig.count == nodes.count - 1 else { return }
+        var bits = Array(sig)[...]
+        var stack = [0]
+        while let c = stack.popLast() {
+            if c != 0 { nodes[c].explored = bits.removeFirst() == "1" }
+            stack.append(contentsOf: nodes[c].children.reversed())
+        }
+    }
+
+    @discardableResult
+    mutating func compact() -> [Int: Int] {
         var keep = [Int](); var stack = [0]
         while let n = stack.popLast() { keep.append(n); stack.append(contentsOf: nodes[n].children) }
         keep.sort()
@@ -114,6 +175,7 @@ public struct Game: Sendable, Equatable {
             n.children = n.children.compactMap { remap[$0] }
             return n
         }
+        return remap
     }
 
     // MARK: Convenience

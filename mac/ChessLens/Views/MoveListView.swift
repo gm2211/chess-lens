@@ -142,6 +142,7 @@ struct MoveListView: View {
         let anchors = reviewed ? momentAnchors(app.game, line: line, moments: app.review.criticalMoments()) : [:]
         let rows = buildRows(app.game, line: line, showSource: app.showSourceAnalysis, anchors: anchors)
         let offMain = app.isOffMainline
+        let exploredCount = app.exploredCount
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -163,6 +164,16 @@ struct MoveListView: View {
                             .font(.mono(13)).foregroundStyle(Theme.ink3)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
+                    }
+                    if exploredCount > 0 {
+                        Button { app.requestClearExploredLines() } label: {
+                            Label("Clear my lines", systemImage: "trash")
+                                .font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Remove the \(exploredCount) move\(exploredCount == 1 ? "" : "s") you explored; the game and its own variations stay")
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, 8)
                     }
                     if reviewed && !app.review.running { ReviewExercises() }
                 }
@@ -203,9 +214,10 @@ struct MoveListView: View {
                 .overlay(alignment: .leading) { Rectangle().fill(Theme.line2).frame(width: 2) }
                 .padding(.leading, 44).padding(.trailing, 12).padding(.vertical, 4)
         case .chips(let fork):
+            // Only the alternatives: the move on the shown line is already in the row above.
             FlowLayout(spacing: 5, lineSpacing: 5) {
-                ForEach(fork.siblings, id: \.self) { sib in
-                    BranchChip(id: sib, selected: sib == fork.node)
+                ForEach(fork.siblings.filter { $0 != fork.node }, id: \.self) { sib in
+                    BranchChip(id: sib)
                 }
             }
             .padding(.leading, 52).padding(.trailing, 12).padding(.top, 3).padding(.bottom, 6)
@@ -224,12 +236,11 @@ struct MoveListView: View {
     }
 }
 
-/// One alternative at a fork: "19. Qb7". The one on the shown line is selected; the game's own move is tagged
-/// "game". Clicking switches the shown line to that branch.
+/// One alternative at a fork: "19. Qb7", marked with a branch glyph. The game's own move is tagged "game" (only
+/// shown when the displayed line is a side line, so it is the way back). Clicking switches to that branch.
 private struct BranchChip: View {
     @Environment(AppModel.self) private var app
     let id: Int
-    let selected: Bool
     @State private var hover = false
 
     var body: some View {
@@ -242,18 +253,16 @@ private struct BranchChip: View {
         let isFirst = g.nodes[id].parent.map { g.nodes[$0].children.first == id } ?? true
         Button { app.goto(id) } label: {
             HStack(spacing: 5) {
+                Image(systemName: "arrow.turn.down.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.ink3)
                 Text(numberedSAN(g, id)).font(.mono(12, weight: .medium))
                 if isGame {
-                    Text("game").font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(selected ? Theme.accent.opacity(0.85) : Theme.ink3)
+                    Text("game").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.ink3)
                 }
-                if selected { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
             }
-            .foregroundStyle(selected ? Theme.accent : Theme.ink2)
+            .foregroundStyle(Theme.ink2)
             .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(selected ? Theme.accentSoft : (hover ? Theme.surface2 : Theme.surface),
-                        in: RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(selected ? Theme.accent.opacity(0.6) : Theme.line2, lineWidth: 1))
+            .background(hover ? Theme.surface2 : Theme.surface, in: RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.line2, lineWidth: 1))
             .contentShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
@@ -263,7 +272,7 @@ private struct BranchChip: View {
             if !isFirst { Button("Make Main Line") { app.promote(id) } }
             Button("Delete Branch", role: .destructive) { app.deleteFrom(id) }
         }
-        .accessibilityLabel("\(numberedSAN(g, id))\(isGame ? ", game move" : "")\(selected ? ", shown" : "")")
+        .accessibilityLabel("\(numberedSAN(g, id))\(isGame ? ", game move" : ""), alternative")
     }
 }
 
