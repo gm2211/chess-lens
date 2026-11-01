@@ -3,7 +3,7 @@ import XCTest
 
 final class ArrowGeometryTests: XCTestCase {
     func sq(_ s: String) -> Square { Sq.parse(s)! }
-    func c(_ s: String) -> ArrowCandidate { ArrowCandidate(from: sq(String(s.prefix(2))), to: sq(String(s.suffix(2)))) }
+    func c(_ s: String, rank: Int = 0) -> ArrowCandidate { ArrowCandidate(from: sq(String(s.prefix(2))), to: sq(String(s.suffix(2))), rank: rank) }
 
     func testKnightDetection() {
         XCTAssertTrue(ArrowGeometry.isKnightMove(from: sq("g1"), to: sq("f3")))
@@ -15,15 +15,15 @@ final class ArrowGeometryTests: XCTestCase {
     }
 
     func testCollinearSameOriginKeepsBestAndMarksOther() {
-        let r = ArrowGeometry.resolveOverlaps([c("d7d5"), c("d7d6"), c("g8f6")])
-        XCTAssertEqual(r.arrows, [c("d7d5"), c("g8f6")])
-        XCTAssertEqual(r.dots, [sq("d6")])
+        let r = ArrowGeometry.resolveOverlaps([c("d7d5", rank: 1), c("d7d6", rank: 2), c("g8f6", rank: 3)])
+        XCTAssertEqual(r.arrows, [c("d7d5", rank: 1), c("g8f6", rank: 3)])
+        XCTAssertEqual(r.dots, [ArrowDot(square: sq("d6"), rank: 2)])
     }
 
     func testBestShortOneDropsLongerCollinear() {
-        let r = ArrowGeometry.resolveOverlaps([c("d7d6"), c("d7d5")])
-        XCTAssertEqual(r.arrows, [c("d7d6")])
-        XCTAssertEqual(r.dots, [sq("d5")])
+        let r = ArrowGeometry.resolveOverlaps([c("d7d6", rank: 1), c("d7d5", rank: 3)])
+        XCTAssertEqual(r.arrows, [c("d7d6", rank: 1)])
+        XCTAssertEqual(r.dots, [ArrowDot(square: sq("d5"), rank: 3)])
     }
 
     func testDifferentDirectionsSameOriginBothKept() {

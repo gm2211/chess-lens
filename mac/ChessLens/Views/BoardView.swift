@@ -34,6 +34,8 @@ struct BoardView: View {
     @State private var gestureStartedOnTarget = false
     @State private var wasSelectedAtStart = false
     @State private var promotion: (from: Square, to: Square)?
+    @State private var hoverSquare: Square?
+    @State private var labelSquare: Square?
 
     private var geo: BoardGeometry { BoardGeometry(side: side, flipped: app.flipped) }
 
@@ -66,19 +68,28 @@ struct BoardView: View {
         return p.current.step
     }
 
-    /// The arrows to draw (best first) and the targets of overlapping alternatives to mark with a ring.
-    private var arrowPlan: (arrows: [BoardArrow], dots: [(Square, Double)]) {
-        if app.hidesEvaluation { return ([], []) }
+    /// What the board draws for engine and review lines: arrows (best first), numbered rings for overlapping
+    /// alternatives, and the hover label text per target square.
+    struct ArrowPlan {
+        var arrows: [BoardArrow] = []
+        var rings: [RingMark] = []
+        var labels: [Square: String] = [:]
+    }
+
+    private var arrowPlan: ArrowPlan {
+        if app.hidesEvaluation { return ArrowPlan() }
         // The guided review owns the board: its marks only (none while a question is open).
-        if let w = app.walkthrough { return (w.marks.arrows, []) }
+        if let w = app.walkthrough { return ArrowPlan(arrows: w.marks.arrows) }
         if let st = lessonStep {
-            return (st.arrows.map { BoardArrow(from: $0.from, to: $0.to, kind: .lesson, opacity: 0.82) }, [])
+            return ArrowPlan(arrows: st.arrows.map { BoardArrow(from: $0.from, to: $0.to, kind: .lesson, opacity: 0.82) })
         }
         // An illustrated example owns the board: only its arrows, so the point isn't lost among engine lines.
         if let f = lessonFocus, !f.arrows.isEmpty || !f.squares.isEmpty {
-            return (f.arrows.map { BoardArrow(from: $0.from, to: $0.to, kind: .lesson, opacity: 0.82) }, [])
+            return ArrowPlan(arrows: f.arrows.map { BoardArrow(from: $0.from, to: $0.to, kind: .lesson, opacity: 0.82) })
         }
         var all = reviewArrows
+        var labelFor: [Int: String] = [:]      // from * 64 + to -> hover text, for the engine lines drawn
+        var rankFor: [Int: Int] = [:]
         if app.engineEnabled, app.engine.linesFEN == app.position.fen, !app.review.running {
             let lines = app.engine.lines.sorted { $0.rank < $1.rank }
             if let best = lines.first {
@@ -87,6 +98,13 @@ struct BoardView: View {
                     guard let u = l.firstMove, let m = Move(uci: u) else { continue }
                     let gap = winPercent(best.eval, for: mover) - winPercent(l.eval, for: mover)
                     if l.rank != best.rank && gap > ArrowGeometry.maxAlternativeGap { continue }
+                    let key = m.from * 64 + m.to
+                    if rankFor[key] == nil {
+                        rankFor[key] = l.rank
+                        if playSessionIsOff {
+                            labelFor[key] = Self.hoverText(rank: l.rank, san: l.sanMoves.first ?? app.position.san(m), eval: l.eval)
+                        }
+                    }
                     if l.rank == best.rank {
                         all.append(BoardArrow(from: m.from, to: m.to, primary: true, opacity: 0.9))
                     } else {
@@ -98,14 +116,36 @@ struct BoardView: View {
         // Review arrows come first and win; then the engine's best, then alternatives. Same move twice keeps the first.
         var seen = Set<Int>()
         all = all.filter { seen.insert($0.from * 64 + $0.to).inserted }
-        let resolved = ArrowGeometry.resolveOverlaps(all.map { ArrowCandidate(from: $0.from, to: $0.to) })
+        let resolved = ArrowGeometry.resolveOverlaps(all.map { ArrowCandidate(from: $0.from, to: $0.to, rank: rankFor[$0.from * 64 + $0.to] ?? 0) })
         let kept = resolved.arrows.compactMap { c in all.first { $0.from == c.from && $0.to == c.to } }
-        let dots = resolved.dots.map { sq in (sq, all.first { $0.to == sq }?.opacity ?? 0.4) }
-        return (kept, dots)
+        let rings = resolved.dots.map { d in RingMark(square: d.square, rank: d.rank, opacity: all.first { $0.to == d.square }?.opacity ?? 0.4) }
+        // Hover text on the target of every drawn engine arrow and on every ring (the first, i.e. best, line wins a square).
+        var labels: [Square: String] = [:]
+        for a in kept { if let t = labelFor[a.from * 64 + a.to], labels[a.to] == nil { labels[a.to] = t } }
+        for d in resolved.dots {
+            if let t = all.first(where: { $0.to == d.square }).flatMap({ labelFor[$0.from * 64 + $0.to] }), labels[d.square] == nil { labels[d.square] = t }
+        }
+        return ArrowPlan(arrows: kept, rings: rings, labels: labels)
+    }
+
+    /// No hover labels while the player is in a game against the engine.
+    private var playSessionIsOff: Bool { app.playSession == nil }
+
+    /// "Engine's best: Be3 (+2.4)", "Engine's 2nd choice: Bg5 (+2.1)"; evals are from White's point of view.
+    static func hoverText(rank: Int, san: String, eval: Eval) -> String {
+        let what: String
+        switch rank {
+        case 1: what = "best"
+        case 2: what = "2nd choice"
+        case 3: what = "3rd choice"
+        default: what = "\(rank)th choice"
+        }
+        return "Engine's \(what): \(san) (\(eval.barLabel))"
     }
 
     var body: some View {
         let g = geo
+        let plan = arrowPlan
         ZStack(alignment: .topLeading) {
             Canvas { ctx, size in drawBoard(&ctx, g) }
                 .frame(width: side, height: side)
@@ -117,9 +157,16 @@ struct BoardView: View {
 
             circleLayer(g)
 
-            Canvas { ctx, _ in let plan = arrowPlan; ArrowPainter.draw(&ctx, arrows: plan.arrows, dots: plan.dots, geo: g) }
+            Canvas { ctx, _ in ArrowPainter.draw(&ctx, arrows: plan.arrows, rings: plan.rings, geo: g) }
                 .frame(width: side, height: side)
                 .allowsHitTesting(false)
+
+            if let sq = labelSquare, !gestureActive, promotion == nil, let text = plan.labels[sq] {
+                let size = ArrowHoverLabel.size(of: text)
+                ArrowHoverLabel(text: text)
+                    .position(ArrowHoverLabel.center(size: size, square: g.rect(sq), board: side))
+                    .transition(.opacity)
+            }
 
             if let promo = promotion { promotionPicker(promo, g) }
         }
@@ -128,6 +175,18 @@ struct BoardView: View {
         .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
         .contentShape(Rectangle())
         .gesture(dragGesture(g), isEnabled: promotion == nil)
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let p): hoverSquare = g.square(at: p)
+            case .ended: hoverSquare = nil
+            }
+        }
+        // The label for an engine arrow's target appears after a short rest and goes away at once.
+        .task(id: (hoverSquare ?? -1) * 2 + (hoverSquare.flatMap { plan.labels[$0] } == nil ? 0 : 1)) {
+            guard let sq = hoverSquare, plan.labels[sq] != nil else { labelSquare = nil; return }
+            try? await Task.sleep(for: .milliseconds(120))
+            if !Task.isCancelled { labelSquare = sq }
+        }
         .onChange(of: app.currentID) { _, _ in selected = nil; dragFrom = nil; promotion = nil }
         .onChange(of: app.epoch) { _, _ in selected = nil; dragFrom = nil; promotion = nil }
         .accessibilityElement(children: .ignore)
