@@ -110,6 +110,12 @@ struct ContentView: View {
 
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
         if app.pendingImport != nil { return .ignored }       // the confirmation card owns the keyboard
+        // ⌥↑ / ⌥↓ pick the previous/next alternative at the current move's fork (↑/↓ alone go to first/last).
+        if press.modifiers.contains(.option), !press.modifiers.contains(.command), !press.modifiers.contains(.control),
+           press.key == .upArrow || press.key == .downArrow {
+            app.cycleBranch(press.key == .upArrow ? -1 : 1)
+            return .handled
+        }
         if press.modifiers.contains(.command) || press.modifiers.contains(.control) || press.modifiers.contains(.option) { return .ignored }
         switch press.key {
         case .escape:

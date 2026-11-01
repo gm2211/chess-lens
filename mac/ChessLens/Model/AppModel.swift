@@ -27,8 +27,14 @@ final class AppModel {
     // MARK: Game state
     private(set) var game: Game
     private(set) var currentID = 0 {
-        didSet { if lessonFocus?.nodeID != currentID { lessonFocus = nil } }   // moving away ends the illustration
+        didSet {
+            if lessonFocus?.nodeID != currentID { lessonFocus = nil }   // moving away ends the illustration
+            followLine()
+        }
     }
+    /// The end of the line the move list shows (root → `lineTip`); `currentID` is always on it. It changes
+    /// only when the user switches lines, so the move list can read it without rebuilding on every move.
+    private(set) var lineTip = 0
     private(set) var epoch = 0 {                     // bumps when a different game is loaded
         didSet { lessonFocus = nil }
     }
@@ -66,8 +72,10 @@ final class AppModel {
             game = saved.game
             currentID = saved.node
             flipped = saved.flipped
+            lineTip = game.lineTip(afterGoto: saved.node, currentTip: saved.tip ?? -1)
         } else {
             game = SampleGames.operaGame
+            lineTip = game.mainline().last ?? 0
         }
         layoutCache = [:]
         engine.onSettingsApplied = { [weak self] in self?.refreshEngine() }
@@ -81,6 +89,10 @@ final class AppModel {
     var lastMove: Move? { node.move }
     var canGoBack: Bool { node.parent != nil }
     var canGoForward: Bool { !node.children.isEmpty }
+    /// The line the move list shows, root first.
+    var displayLine: [Int] { game.displayLine(tip: lineTip) }
+    /// Whether the shown line leaves the game's main line (the move list then offers "Back to game line").
+    var isOffMainline: Bool { !game.isOnMainline(lineTip) }
 
     var title: String { PGN.title(of: game) }
     var subtitle: String {
@@ -135,9 +147,34 @@ final class AppModel {
     }
 
     func back() { if let p = node.parent { goto(p) } }
-    func forward() { if let c = node.children.first { goto(c) } }
+    /// Next move along the shown line (not necessarily the main continuation).
+    func forward() {
+        if let c = game.nextOnLine(from: currentID, tip: lineTip) ?? node.children.first { goto(c) }
+    }
     func first() { goto(0) }
-    func last() { goto(game.mainline(from: currentID).last ?? currentID) }
+    func last() {
+        if currentID != lineTip, game.isOnLine(currentID, tip: lineTip) { goto(lineTip) }
+        else { goto(game.mainline(from: currentID).last ?? currentID) }
+    }
+
+    /// Switches to the previous/next alternative at the current move's fork (⌥↑ / ⌥↓).
+    func cycleBranch(_ offset: Int) {
+        if let s = game.sibling(of: currentID, offset: offset) { goto(s) }
+    }
+
+    /// Leaves a side line: back to where the shown line left the main line, with the main line shown again.
+    func backToGameLine() {
+        let target = game.lastMainlineNode(on: displayLine)
+        setLineTip(game.mainline().last ?? 0)
+        goto(target)
+    }
+
+    /// Keeps `currentID` on the shown line: moving off it shows the main continuation from the new node.
+    private func followLine() {
+        setLineTip(game.lineTip(afterGoto: currentID, currentTip: lineTip))
+    }
+
+    private func setLineTip(_ id: Int) { if lineTip != id { lineTip = id } }
 
     func toggleFlip() { flipped.toggle(); persist() }
 
@@ -206,7 +243,10 @@ final class AppModel {
         let path = game.path(to: parent)
         var choices: [Int] = []
         for (a, b) in zip(path, path.dropFirst()) { choices.append(game.nodes[a].children.firstIndex(of: b) ?? 0) }
+        let tipMoves = game.moves(to: lineTip)
         game.delete(id)
+        let survivor = game.locate(moves: tipMoves)   // the same line, as far as it survives
+        lineTip = game.moves(to: survivor).count == tipMoves.count ? survivor : (game.mainline(from: survivor).last ?? survivor)
         var cur = 0
         for c in choices {
             let kids = game.nodes[cur].children
@@ -229,6 +269,7 @@ final class AppModel {
         review.reset()
         ask.reset()
         game = g
+        lineTip = g.mainline().last ?? 0
         currentID = 0
         self.flipped = flipped
         layoutCache = [:]
@@ -274,7 +315,7 @@ final class AppModel {
 
     func startReview() {
         guard engine.isAvailable else { showToast("The engine is not available in this build."); return }
-        let line = game.fullLine(through: currentID)
+        let line = game.fullLine(through: lineTip)
         guard line.count > 1 else { showToast("Play or load some moves first."); return }
         review.start(game: game, line: line, engine: engine) { [weak self] finished in
             guard let self else { return }
@@ -385,6 +426,7 @@ final class AppModel {
         var pgn: String
         var path: [Int]       // child index chosen at each step from the root
         var flipped: Bool
+        var tip: [Int]? = nil  // child indices to the shown line's end (absent in older saves)
     }
 
     private static let saveKey = "lastGame.v1"
@@ -399,23 +441,31 @@ final class AppModel {
             for (a, b) in zip(path, path.dropFirst()) {
                 choices.append(self.game.nodes[a].children.firstIndex(of: b) ?? 0)
             }
-            let saved = Saved(pgn: PGN.export(self.game), path: choices, flipped: self.flipped)
+            let tipPath = self.game.path(to: self.lineTip)
+            var tipChoices: [Int] = []
+            for (a, b) in zip(tipPath, tipPath.dropFirst()) {
+                tipChoices.append(self.game.nodes[a].children.firstIndex(of: b) ?? 0)
+            }
+            let saved = Saved(pgn: PGN.export(self.game), path: choices, flipped: self.flipped, tip: tipChoices)
             if let data = try? JSONEncoder().encode(saved) { UserDefaults.standard.set(data, forKey: Self.saveKey) }
         }
     }
 
-    private static func restore() -> (game: Game, node: Int, flipped: Bool)? {
+    private static func restore() -> (game: Game, node: Int, flipped: Bool, tip: Int?)? {
         guard let data = UserDefaults.standard.data(forKey: saveKey),
               let saved = try? JSONDecoder().decode(Saved.self, from: data),
               let parsed = PGN.parse(saved.pgn).first else { return nil }
         let g = parsed.game
-        var cur = 0
-        for c in saved.path {
-            let kids = g.nodes[cur].children
-            guard kids.indices.contains(c) else { break }
-            cur = kids[c]
+        func follow(_ choices: [Int]) -> Int {
+            var cur = 0
+            for c in choices {
+                let kids = g.nodes[cur].children
+                guard kids.indices.contains(c) else { break }
+                cur = kids[c]
+            }
+            return cur
         }
-        return (g, cur, saved.flipped)
+        return (g, follow(saved.path), saved.flipped, saved.tip.map(follow))
     }
 }
 
