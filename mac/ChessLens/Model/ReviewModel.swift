@@ -206,6 +206,20 @@ final class ReviewModel {
         }
     }
 
+    /// The AI provider or model changed. Whatever AI work is hung, failed or was waiting on a sign-in starts over with
+    /// the new one; finished work stays. The engine review is untouched.
+    func providerChanged(game: Game) {
+        guard hasResults, !running else { return }
+        let neverStarted = lesson.state == .needsSignIn && commentary.states.isEmpty
+        lesson.providerChanged(game: game, review: self)
+        if neverStarted {
+            // The review finished with no provider ready, so the moments' notes were never started either.
+            commentary.explainAll(autoMoments(), game: game, review: self)
+        } else {
+            commentary.providerChanged(game: game, review: self, automatic: autoMoments())
+        }
+    }
+
     /// The moments explained automatically: the six most important, in game order.
     func autoMoments(limit: Int = 6) -> [Int] {
         let picks = momentPicks()

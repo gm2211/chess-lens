@@ -133,9 +133,9 @@ struct AskDrawer: View {
                     if ask.isThinking { thinking(partial: ask.partial) }
                     switch ask.status {
                     case .needsSignIn:
-                        notice("No AI provider is set up. Use the AI chip at the top of this panel to sign in or choose one.", retry: false)
+                        notice("Not signed in to \(AIHub.shared.selected.displayName). Use the AI chip at the top of this panel to sign in or choose another model.", retry: false)
                     case .failed(let m):
-                        notice(m, retry: true)
+                        AIFailureView(message: m) { app.ask.retry(game: app.game, review: app.review, node: app.currentID) }
                     default: EmptyView()
                     }
                     Color.clear.frame(height: 1).id("end")
@@ -154,7 +154,7 @@ struct AskDrawer: View {
         } else {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Thinking\u{2026}").font(.system(size: 12.5)).foregroundStyle(Theme.ink3)
+                Text(app.ask.switchNote ?? "Thinking\u{2026}").font(.system(size: 12.5)).foregroundStyle(Theme.ink3)
             }
         }
     }

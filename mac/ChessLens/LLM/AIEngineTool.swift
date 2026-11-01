@@ -67,8 +67,10 @@ struct GroundedAnswer {
 enum AIToolLoop {
     static func run(hub: AIHub, system: String, prompt: String, maxTokens: Int,
                     allowed base: Set<String>, tool: Bool, seed: [EngineToolRequest] = [], note initialNote: String? = nil,
+                    timeout: AITimeout = .note,
                     onPartial: (@MainActor (String) -> Void)? = nil) async throws -> GroundedAnswer {
         var allowed = base
+        let deadline = ContinuousClock.now.advanced(by: timeout.overall)
         var turns: [EngineTool.Turn] = []
         for r in seed {
             try Task.checkCancellation()
@@ -82,8 +84,10 @@ enum AIToolLoop {
         for _ in 0..<(budget + 4) {
             try Task.checkCancellation()
             let p = EngineTool.transcript(prompt: prompt, turns: turns, callsLeft: max(0, budget - calls), note: note)
+            let remaining = ContinuousClock.now.duration(to: deadline)
+            if remaining <= .zero { throw AITimedOut(.overall) }
             let text = try await collect(hub: hub, system: system, prompt: p, maxTokens: maxTokens,
-                                    stopAtTag: budget > 0, onPartial: onPartial)
+                                    stopAtTag: budget > 0, inactivity: timeout.inactivity, overall: remaining, onPartial: onPartial)
             let requests = EngineTool.requests(in: text)
             let final = stripTags(text)
             if !requests.isEmpty, calls < budget {
@@ -131,9 +135,11 @@ enum AIToolLoop {
 
     /// Collects the streamed answer; with `stopAtTag`, stops reading as soon as a complete engine tag has arrived.
     private static func collect(hub: AIHub, system: String, prompt: String, maxTokens: Int, stopAtTag: Bool,
+                                        inactivity: Duration, overall: Duration,
                                         onPartial: (@MainActor (String) -> Void)?) async throws -> String {
         var text = ""
-        for try await chunk in hub.complete(system: system, prompt: prompt, maxTokens: maxTokens) {
+        for try await chunk in hub.complete(system: system, prompt: prompt, maxTokens: maxTokens,
+                                       inactivity: inactivity, overall: overall) {
             text += chunk
             // Streamed text is only shown for a reply that is not an engine request.
             if let onPartial, !text.localizedCaseInsensitiveContains("<engine") {

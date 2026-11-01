@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Observation
 import os
+import ChessCore
 
 private let aiLog = Logger(subsystem: "app.chesslens", category: "ai")
 
@@ -104,6 +105,7 @@ final class AIHub {
             guard newValue != _selected else { return }
             _selected = newValue
             defaults.set(newValue.rawValue, forKey: Self.selectedKey)
+            onSelectionChange?()
         }
     }
 
@@ -113,6 +115,7 @@ final class AIHub {
         set {
             chosen[_selected] = newValue
             defaults.set(newValue, forKey: Self.modelKey(_selected))
+            onSelectionChange?()
         }
     }
 
@@ -129,6 +132,8 @@ final class AIHub {
     var current: AIProviderState { states[selected] ?? AIProviderState() }
     var isReady: Bool { current.ready }
 
+    /// Called after the user picks another provider or model, so AI work that is hung or failed can start over with it.
+    @ObservationIgnored var onSelectionChange: (@MainActor () -> Void)?
     @ObservationIgnored private let sidecar: LLMSidecar
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -160,7 +165,10 @@ final class AIHub {
             return
         }
         do {
-            apply(try await sidecar.status(provider: id.rawValue), to: id)
+            let sidecar = self.sidecar
+            apply(try await withTimeout(.seconds(20)) { try await sidecar.status(provider: id.rawValue) }, to: id)
+        } catch is AITimedOut {
+            states[id] = AIProviderState(problem: AIFailureText.timedOut(.inactive, provider: id.displayName))
         } catch {
             states[id] = AIProviderState(problem: error.localizedDescription)
         }
@@ -228,9 +236,29 @@ final class AIHub {
 
     // MARK: Completion
 
-    /// Streams the selected provider's answer as text chunks. Cancelling the consumer cancels the request.
-    func complete(system: String, prompt: String, maxTokens: Int?) -> AsyncThrowingStream<String, Error> {
-        if selected == .apple { return AppleIntelligence.stream(system: system, prompt: prompt, maxTokens: maxTokens) }
-        return sidecar.complete(provider: selected.rawValue, model: model, system: system, prompt: prompt, maxTokens: maxTokens)
+    /// Streams the selected provider's answer as text chunks. Cancelling the consumer cancels the request. Fails with
+    /// `AITimedOut` (and cancels the request) when nothing arrives for `inactivity`, or after `overall`.
+    func complete(system: String, prompt: String, maxTokens: Int?,
+                  inactivity: Duration = AITimeout.note.inactivity, overall: Duration? = nil) -> AsyncThrowingStream<String, Error> {
+        let raw = selected == .apple
+            ? AppleIntelligence.stream(system: system, prompt: prompt, maxTokens: maxTokens)
+            : sidecar.complete(provider: selected.rawValue, model: model, system: system, prompt: prompt, maxTokens: maxTokens)
+        return withInactivityTimeout(raw, inactivity: inactivity, overall: overall)
+    }
+
+    /// Plain words for why a request failed: "Grok didn't respond.", "The request was cancelled."
+    func failureText(for error: Error) -> String {
+        let name = selected.displayName
+        switch error {
+        case let t as AITimedOut: return AIFailureText.timedOut(t.kind, provider: name)
+        case is CancellationError, LLMError.canceled: return AIFailureText.cancelled
+        case let e as LLMError where e.needsSignIn: return AIFailureText.notSignedIn(provider: name)
+        default: return error.localizedDescription
+        }
+    }
+
+    /// Providers other than the selected one that are signed in and usable, for the "Switch model" menu.
+    var otherReadyProviders: [AIProviderID] {
+        AIProviderID.allCases.filter { $0 != selected && states[$0]?.ready == true }
     }
 }

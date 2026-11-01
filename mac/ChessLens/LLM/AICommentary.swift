@@ -39,12 +39,33 @@ final class AICommentary {
         for (id, s) in states where s == .loading || s == .signingIn { states[id] = nil }
     }
 
+    /// The provider or model changed: notes in flight, failed or waiting on a sign-in start over with the new one;
+    /// finished notes stay. `automatic` are the notes a batch would have written (see `AIRetry.notesToRun`).
+    func providerChanged(game: Game, review: ReviewModel, automatic: [Int]) {
+        let jobs = states.map { (id: $0.key, phase: Self.phase($0.value)) }.sorted { $0.id < $1.id }
+        let ids = AIRetry.notesToRun(jobs, wanted: automatic, batchWasRunning: batchTask != nil)
+        guard !ids.isEmpty else { return }
+        cancelAll()
+        for id in ids where Self.phase(states[id]) != .done { states[id] = nil }
+        explainAll(ids, game: game, review: review)
+    }
+
+    static func phase(_ s: State?) -> AIJobPhase {
+        switch s {
+        case nil: .idle
+        case .loading?, .signingIn?: .running
+        case .failed?: .failed
+        case .needsSignIn?: .needsSignIn
+        case .done?: .done
+        }
+    }
+
     func explain(_ id: Int, game: Game, review: ReviewModel) {
         guard tasks[id] == nil, states[id] != .loading, let req = Self.request(game: game, review: review, id: id) else { return }
         states[id] = .loading
         tasks[id] = Task {
             await run(id, req)
-            tasks[id] = nil
+            if !Task.isCancelled { tasks[id] = nil }
         }
     }
 
@@ -78,7 +99,11 @@ final class AICommentary {
                     if Task.isCancelled || states.values.contains(.needsSignIn) { stopped = true; group.cancelAll() }
                 }
             }
-            if !Task.isCancelled { batch = nil; batchTask = nil }
+            if !Task.isCancelled {
+                // Notes a sign-in stop cancelled mid-way go back to not-asked.
+                for id in todo where states[id] == .loading { states[id] = nil }
+                batch = nil; batchTask = nil
+            }
         }
     }
 
@@ -88,8 +113,8 @@ final class AICommentary {
             if !hub.isReady { await hub.refresh(hub.selected) }
             guard hub.isReady else { states[id] = .needsSignIn; return }
             let answer = try await AIToolLoop.run(hub: hub, system: CoachPrompt.system(tool: true), prompt: req.prompt,
-                                                  maxTokens: 350, allowed: req.allowed, tool: true)
-            if Task.isCancelled { if states[id] == .loading { states[id] = nil }; return }
+                                                  maxTokens: 350, allowed: req.allowed, tool: true, timeout: .note)
+            if Task.isCancelled { return }
             guard let lesson = MomentLesson.parse(answer.text) else { states[id] = .failed("The model returned no text."); return }
             var unverified: [String] = []
             let clean = lesson.mapText { t in
@@ -98,16 +123,17 @@ final class AICommentary {
                 return c.text
             }
             states[id] = .done(clean, unverified: unverified)
-        } catch is CancellationError {
-            if states[id] == .loading { states[id] = nil }
-        } catch LLMError.canceled {
-            if states[id] == .loading { states[id] = nil }
-        } catch let e as LLMError where e.needsSignIn {
-            states[id] = .needsSignIn
-            await hub.refresh(hub.selected)
         } catch {
-            if Task.isCancelled { if states[id] == .loading { states[id] = nil }; return }
-            states[id] = .failed(error.localizedDescription)
+            // A cancelled run leaves the state to whoever cancelled it (a restart may already have set a new one).
+            if Task.isCancelled { return }
+            if error is CancellationError || (error as? LLMError) == .canceled {
+                if states[id] == .loading { states[id] = nil }
+            } else if let e = error as? LLMError, e.needsSignIn {
+                states[id] = .needsSignIn
+                await hub.refresh(hub.selected)
+            } else {
+                states[id] = .failed(hub.failureText(for: error))
+            }
         }
     }
 

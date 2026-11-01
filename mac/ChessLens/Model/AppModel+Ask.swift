@@ -29,6 +29,13 @@ extension AppModel {
         openAsk()
     }
 
+    /// The user picked another AI provider or model: lesson, notes and a pending question that were hung or failed
+    /// start over with it (see `ReviewModel.providerChanged`, `AskAI.providerChanged`).
+    func aiSelectionChanged() {
+        review.providerChanged(game: game)
+        ask.providerChanged(game: game, review: review, live: ask.askedNode == currentID ? liveEngineReport : nil)
+    }
+
     func sendAsk(_ question: String) {
         guard canAskAI else { return }
         ask.ask(question, game: game, review: review, node: currentID, live: liveEngineReport)
