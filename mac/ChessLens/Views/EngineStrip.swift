@@ -46,8 +46,8 @@ struct EngineStrip: View {
             status("cpu", "Engine off. Turn it on in the toolbar.")
         } else if app.review.running {
             status("hourglass", "Live analysis resumes when the review ends.")
-        } else if app.position.legalMoves().isEmpty {
-            status("flag.checkered", app.position.isCheck ? "Checkmate" : "Stalemate")
+        } else if let end = app.game.gameEnd(at: app.currentID) {
+            status("flag.checkered", end.title)
         } else if let best = lines.first {
             Button { expanded.toggle() } label: {
                 HStack(spacing: 8) {
@@ -66,7 +66,7 @@ struct EngineStrip: View {
             .accessibilityLabel("Engine: \(best.eval.display), depth \(best.depth), \(best.text)")
         } else {
             HStack(spacing: 8) {
-                Color.clear.frame(width: 8)
+                Color.clear.frame(width: 8, height: 20)
                 RoundedRectangle(cornerRadius: 3).fill(Theme.line).frame(width: 50, height: 20)
                 RoundedRectangle(cornerRadius: 3).fill(Theme.line).frame(height: 10)
             }
