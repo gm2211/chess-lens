@@ -441,16 +441,16 @@ private struct SummaryCard: View {
     }
 }
 
-/// Opening / middlegame / endgame accuracy as icon + number.
+/// Opening / middlegame / endgame accuracy as a short label + percentage.
 private struct PhaseChip: View {
     let phase: GamePhase
     let stat: PhaseStat
 
     var body: some View {
         let acc = Int((stat.accuracy ?? 0).rounded())
-        HStack(spacing: 3) {
-            Image(systemName: icon).font(.system(size: 9.5, weight: .semibold)).foregroundStyle(Theme.ink3)
-            Text("\(acc)").font(.system(size: 11.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.ink2)
+        HStack(spacing: 4) {
+            Text(label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.ink3)
+            Text("\(acc)%").font(.system(size: 11.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.ink2)
         }
         .padding(.horizontal, 5).padding(.vertical, 2)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 3))
@@ -458,11 +458,11 @@ private struct PhaseChip: View {
         .help(help(acc))
     }
 
-    private var icon: String {
+    private var label: String {
         switch phase {
-        case .opening: "book.closed"
-        case .middlegame: "bolt"
-        case .endgame: "flag"
+        case .opening: "Opening"
+        case .middlegame: "Middle"
+        case .endgame: "End"
         }
     }
 
