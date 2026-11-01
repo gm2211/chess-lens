@@ -8,10 +8,20 @@ public struct ArrowPoint: Equatable, Sendable {
 }
 
 /// A move arrow before overlap resolution. Candidates are passed best-first.
+/// `rank` is the engine line's 1-based rank (0 when the arrow is not an engine line); it only labels the ring
+/// left behind when the arrow is dropped.
 public struct ArrowCandidate: Equatable, Sendable {
     public var from: Square
     public var to: Square
-    public init(from: Square, to: Square) { self.from = from; self.to = to }
+    public var rank: Int
+    public init(from: Square, to: Square, rank: Int = 0) { self.from = from; self.to = to; self.rank = rank }
+}
+
+/// The ring left where a dropped alternative would have pointed, carrying that line's rank.
+public struct ArrowDot: Equatable, Sendable {
+    public var square: Square
+    public var rank: Int
+    public init(square: Square, rank: Int) { self.square = square; self.rank = rank }
 }
 
 /// The closed outline of one arrow (shaft and head as a single polygon) plus a round cap at its start.
@@ -47,22 +57,23 @@ public enum ArrowGeometry {
         return (df == 1 && dr == 2) || (df == 2 && dr == 1)
     }
 
-    /// Drops arrows that would sit on top of a better one and reports the targets to mark with a dot instead.
+    /// Drops arrows that would sit on top of a better one and reports the targets to mark with a ring instead,
+    /// each carrying the dropped candidate's rank.
     /// `candidates` must be best-first. An arrow is dropped when it shares its target with a kept arrow,
     /// or shares its origin and runs the same way along the same line (its head would land on the longer shaft);
-    /// in the second case its target gets a dot unless a kept arrow already ends there.
-    public static func resolveOverlaps(_ candidates: [ArrowCandidate]) -> (arrows: [ArrowCandidate], dots: [Square]) {
+    /// in the second case its target gets a ring unless a kept arrow already ends there.
+    public static func resolveOverlaps(_ candidates: [ArrowCandidate]) -> (arrows: [ArrowCandidate], dots: [ArrowDot]) {
         var kept: [ArrowCandidate] = []
-        var dots: [Square] = []
+        var dots: [ArrowDot] = []
         for c in candidates {
             if kept.contains(where: { $0.to == c.to }) { continue }
             if kept.contains(where: { $0.from == c.from && collinearSameWay($0, c) }) {
-                if !dots.contains(c.to) { dots.append(c.to) }
+                if !dots.contains(where: { $0.square == c.to }) { dots.append(ArrowDot(square: c.to, rank: c.rank)) }
                 continue
             }
             kept.append(c)
         }
-        dots.removeAll { d in kept.contains { $0.to == d } }
+        dots.removeAll { d in kept.contains { $0.to == d.square } }
         return (kept, dots)
     }
 
