@@ -75,7 +75,7 @@ public enum Grounding {
     }
 
     /// Splits prose at ". ", "! " and "? " (not inside "23...Nf6" or "12. e4").
-    static func sentences(_ text: String) -> [String] {
+    public static func sentences(_ text: String) -> [String] {
         let chars = Array(text)
         var out: [String] = [], cur = ""
         var i = 0

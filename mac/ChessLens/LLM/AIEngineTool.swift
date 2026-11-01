@@ -66,7 +66,7 @@ struct GroundedAnswer {
 @MainActor
 enum AIToolLoop {
     static func run(hub: AIHub, system: String, prompt: String, maxTokens: Int,
-                    allowed base: Set<String>, tool: Bool, seed: [EngineToolRequest] = [],
+                    allowed base: Set<String>, tool: Bool, seed: [EngineToolRequest] = [], note initialNote: String? = nil,
                     onPartial: (@MainActor (String) -> Void)? = nil) async throws -> GroundedAnswer {
         var allowed = base
         var turns: [EngineTool.Turn] = []
@@ -77,7 +77,7 @@ enum AIToolLoop {
         var calls = 0
         // Apple's on-device model has a small context; each round re-sends the transcript.
         let budget = tool ? (hub.selected == .apple ? 2 : EngineTool.maxCalls) : 0
-        var note: String?
+        var note: String? = initialNote
         var retried = false
         for _ in 0..<(budget + 4) {
             try Task.checkCancellation()
@@ -98,7 +98,7 @@ enum AIToolLoop {
             let bad = Grounding.unsupported(in: final, allowed: allowed)
             if !bad.isEmpty, !retried {
                 retried = true
-                note = "Your previous answer cited moves that are not in the data or the engine results: "
+                note = (initialNote.map { $0 + "\n" } ?? "") + "Your previous answer cited moves that are not in the data or the engine results: "
                     + bad.joined(separator: ", ")
                     + ". Only mention moves from the data" + (calls < budget ? ", or check them with the engine tool first" : "")
                     + ". Answer again."

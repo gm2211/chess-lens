@@ -7,7 +7,8 @@ struct AskMessage: Identifiable, Equatable {
     enum Kind: Equatable {
         case user
         /// `unverified`: moves still cited without support after the retry (shown with a marker).
-        case assistant(unverified: [String])
+        /// `conflict`: the engine's verdict when the answer still contradicts it after the retry.
+        case assistant(unverified: [String], conflict: String? = nil)
         /// A divider such as "now at 12. O-O-O" when the board moved between questions.
         case note
     }
@@ -27,6 +28,9 @@ final class AskAI {
         case needsSignIn
         case failed(String)
     }
+
+    /// Live analysis at least this deep is reused instead of running a fresh search.
+    static let minLiveDepth = 14
 
     private(set) var messages: [AskMessage] = []
     private(set) var status: Status = .idle
@@ -78,14 +82,14 @@ final class AskAI {
     }
 
     /// Asks again after a failure.
-    func retry(game: Game, review: ReviewModel, node: Int) {
+    func retry(game: Game, review: ReviewModel, node: Int, live: AskPrompt.EngineReport? = nil) {
         guard let q = lastQuestion, !isThinking else { return }
         if case .user? = messages.last?.kind { messages.removeLast() }
         status = .idle
-        ask(q, game: game, review: review, node: node)
+        ask(q, game: game, review: review, node: node, live: live)
     }
 
-    func ask(_ question: String, game: Game, review: ReviewModel, node id: Int) {
+    func ask(_ question: String, game: Game, review: ReviewModel, node id: Int, live: AskPrompt.EngineReport? = nil) {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, !isThinking, game.nodes.indices.contains(id) else { return }
         let ctx = Self.context(game: game, review: review, id: id)
@@ -99,25 +103,39 @@ final class AskAI {
         let turnsSoFar = turns
         let noted = AskPrompt.illegalMoveNotes(question: q, subject: ctx.subject).flatMap(\.sans)
         let extra = known.union(Grounding.allowed(AskPrompt.citedMoves(in: turns.map(\.question) + [q]) + noted))
-        task = Task { await run(q, ctx, turns: turnsSoFar, extra: extra) }
+        task = Task { await run(q, ctx, live: live, turns: turnsSoFar, extra: extra) }
     }
 
-    private func run(_ q: String, _ ctx: Context, turns: [AskPrompt.Turn], extra: Set<String>) async {
+    private func run(_ q: String, _ ctx: Context, live: AskPrompt.EngineReport?, turns: [AskPrompt.Turn], extra: Set<String>) async {
         do {
             if !hub.isReady { await hub.refresh(hub.selected) }
             guard hub.isReady else { fail(.needsSignIn); return }
-            let allowed = ctx.allowed.union(extra)
             // Apple's on-device model has a small context window: start compact there.
             let compactFirst = hub.selected == .apple
-            let answer: GroundedAnswer
+            // Ground the question: Stockfish on the asked position (and the one before) goes into the prompt as data.
+            let ctx = await seeded(ctx, live: live, includeBefore: !compactFirst)
+            try Task.checkCancellation()
+            let allowed = ctx.allowed.union(extra)
+            var compact = compactFirst, tool = true
+            var answer: GroundedAnswer
             do {
-                answer = try await attempt(q, ctx, turns, allowed, compact: compactFirst, tool: true)
+                answer = try await attempt(q, ctx, turns, allowed, compact: compact, tool: tool)
             } catch where !compactFirst && AIToolLoop.isContextLimit(error) {
-                answer = try await attempt(q, ctx, turns, allowed, compact: true, tool: false)
+                compact = true; tool = false
+                answer = try await attempt(q, ctx, turns, allowed, compact: compact, tool: tool)
             }
             if Task.isCancelled { return }
+            // An answer that contradicts the engine's verdict gets one more try with a corrective note.
+            var conflict: String?
+            if let e = ctx.subject.verdictEval, let v = AnswerCheck.contradiction(answer: answer.text, eval: e) {
+                let again = try await attempt(q, ctx, turns, allowed.union(answer.allowed), compact: compact, tool: tool,
+                                              note: AnswerCheck.correctiveNote(verdict: v))
+                if Task.isCancelled { return }
+                answer = again
+                conflict = AnswerCheck.contradiction(answer: again.text, eval: e)
+            }
             guard !answer.text.isEmpty else { fail(.failed("The model returned no text.")); return }
-            messages.append(AskMessage(kind: .assistant(unverified: answer.unsupported), text: answer.text))
+            messages.append(AskMessage(kind: .assistant(unverified: answer.unsupported, conflict: conflict), text: answer.text))
             self.turns.append(AskPrompt.Turn(context: ctx.label, question: q, answer: answer.text))
             known.formUnion(answer.allowed)
             status = .idle; partial = nil; task = nil
@@ -138,12 +156,39 @@ final class AskAI {
     }
 
     private func attempt(_ q: String, _ ctx: Context, _ turns: [AskPrompt.Turn], _ allowed: Set<String>,
-                         compact: Bool, tool: Bool) async throws -> GroundedAnswer {
+                         compact: Bool, tool: Bool, note: String? = nil) async throws -> GroundedAnswer {
         try await AIToolLoop.run(hub: hub, system: AskPrompt.system(tool: tool, compact: compact),
                                  prompt: AskPrompt.user(ctx.subject, turns: turns, question: q, compact: compact),
                                  maxTokens: 500, allowed: allowed, tool: tool,
-                                 seed: tool ? Self.namedMoveChecks(q, ctx.subject) : [],
+                                 seed: tool ? Self.namedMoveChecks(q, ctx.subject) : [], note: note,
                                  onPartial: { [weak self] text in if self?.status == .thinking { self?.partial = text } })
+    }
+
+    /// Adds Stockfish's view of the asked position (and of the one before the last move) to the context: reuses the
+    /// live analysis when given, otherwise runs the tool engine. Fills the review's gaps (`evalNow`, `line`) and
+    /// allows the moves the results show. An engine failure leaves the context as it was.
+    private func seeded(_ ctx: Context, live: AskPrompt.EngineReport?, includeBefore: Bool) async -> Context {
+        var c = ctx
+        var sans: [String] = []
+        func report(_ p: Position, reuse: AskPrompt.EngineReport?) async -> AskPrompt.EngineReport? {
+            if let reuse { return reuse }
+            guard !p.legalMoves().isEmpty, let r = try? await ToolEngine.shared.analyse(p), !r.lines.isEmpty else { return nil }
+            return AskPrompt.EngineReport(lines: r.lines, depth: r.depth)
+        }
+        if let r = await report(c.subject.position, reuse: live) {
+            c.subject.engine = r
+            sans += r.text(for: c.subject.position).sans
+            if c.subject.evalNow == nil { c.subject.evalNow = r.lines.first?.eval }
+            if c.subject.line.isEmpty { c.subject.line = r.lines.first?.pv ?? [] }
+        }
+        if includeBefore, !Task.isCancelled, let before = c.subject.before, let r = await report(before, reuse: nil) {
+            c.subject.engineBefore = r
+            sans += r.text(for: before).sans
+            if c.subject.evalBefore == nil { c.subject.evalBefore = r.lines.first?.eval }
+            if c.subject.best.isEmpty { c.subject.best = r.lines.first?.pv ?? [] }
+        }
+        c.allowed.formUnion(Grounding.allowed(sans))
+        return c
     }
 
     /// Moves the user names ("why not Qh5?") are run through the engine before the model answers, from the position

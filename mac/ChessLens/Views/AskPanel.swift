@@ -247,9 +247,14 @@ private struct MessageRow: View {
                     .padding(.horizontal, 10).padding(.vertical, 6)
                     .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 8))
             }
-        case .assistant(let unverified):
+        case .assistant(let unverified, let conflict):
             VStack(alignment: .leading, spacing: 4) {
                 AnswerBubble(text: message.text)
+                if let conflict {
+                    Label("May disagree with the engine", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
+                        .help("The engine's verdict is: \(conflict). This answer may not match it.")
+                }
                 if !unverified.isEmpty {
                     Label("Some moves unverified", systemImage: "questionmark.circle")
                         .font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
