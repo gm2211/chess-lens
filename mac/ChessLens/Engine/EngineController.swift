@@ -41,6 +41,30 @@ final class EngineController {
     private var liveTask: Task<Void, Never>?
     private var liveGeneration = 0
 
+    // Smooth publishing: lines change once per completed depth, throttled, never regress below a stronger cached result.
+    private struct CachedEval {
+        var lines: [EngineLine]
+        var depth: Int
+        var nodes: Int
+        var nps: Int?
+    }
+    private struct Pending { var fen: String; var key: String; var lines: [EngineLine]; var depth: Int; var nodes: Int; var nps: Int? }
+    private var cache: [String: CachedEval] = [:]
+    private var cacheOrder: [String] = []          // least recently used first
+    private let cacheLimit = 500
+    private var pending: Pending?
+    private var flushTask: Task<Void, Never>?
+    private var scheduledGen = -1
+    private var lastPublish = ContinuousClock.now
+    private var searchStart = ContinuousClock.now
+    private var shownKey: String?
+    private var shownNodes = 0                     // strength of what `lines` currently shows
+    private var shownDepth = 0
+    private var shownLineCount = 0
+    private let publishInterval: Duration = .milliseconds(125)
+    private let minDepthToShow = 8
+    private let minWaitToShow: Duration = .milliseconds(250)
+
     init(executableURL: URL? = UCIEngine.defaultExecutableURL) {
         let c = settings.config
         engine = executableURL.map { UCIEngine(executableURL: $0, threads: c.threads, hash: c.hash) }
@@ -50,6 +74,7 @@ final class EngineController {
 
     private func settingsChanged(_ old: EngineConfig, _ new: EngineConfig) {
         if new.lines < old.lines { lines.removeAll { $0.rank > new.lines } }
+        if new.lines != old.lines || new.depthCap != old.depthCap { cache.removeAll(); cacheOrder.removeAll() }
         guard let engine else { return }
         Task { [weak self] in
             await engine.setOptions(threads: new.threads, hash: new.hash)
@@ -69,8 +94,26 @@ final class EngineController {
         let fen = position.fen
         // A finished game has nothing to analyse.
         if position.legalMoves().isEmpty { finish(fen: fen, engine: engine); return }
+        flushTask?.cancel(); pending = nil
+        let cfg = settings.config
+        let key = Self.cacheKey(fen, history, cfg.lines)
+        if shownKey != key || linesFEN != fen {
+            if let hit = touchCache(key) {
+                // Back at a known position: show the stored result straight away.
+                lines = hit.lines; depth = hit.depth; linesFEN = fen; shownKey = key
+                shownNodes = hit.nodes; shownDepth = hit.depth; shownLineCount = hit.lines.count
+            } else {
+                lines = []; depth = 0; shownKey = nil; shownNodes = 0; shownDepth = 0; shownLineCount = 0
+            }
+        }
+        // Already searched at least as deep as the budget with the full line count: nothing more to learn.
+        if cfg.depthCap > 0, let hit = cache[key], hit.depth >= cfg.depthCap,
+           hit.lines.count >= min(cfg.lines, position.legalMoves().count) {
+            searching = false
+            liveTask = Task { await engine.stop() }
+            return
+        }
         searching = true
-        if linesFEN != fen { lines = []; depth = 0 }
         liveTask = Task { [weak self] in
             try? await Task.sleep(for: debounce)
             if Task.isCancelled { return }
@@ -79,31 +122,38 @@ final class EngineController {
     }
 
     private func runLive(engine: UCIEngine, position: Position, fen: String, history: (rootFEN: String, moves: [String])?, gen: Int) async {
+        let key = Self.cacheKey(fen, history, settings.config.lines)
         if status == .idle { status = .starting }
         let cfg = settings.config
         do {
             let stream = try await engine.search(fen: history?.rootFEN ?? fen, moves: history?.moves ?? [], limit: .infinite(depthCap: cfg.depthCap == 0 ? .max : cfg.depthCap), multiPV: cfg.lines)
             if gen != liveGeneration { return }
             status = .running
-            linesFEN = fen
+            if linesFEN != fen { linesFEN = fen }
+            searchStart = .now
+            var acc = SnapshotAccumulator(expectedPVs: min(cfg.lines, position.legalMoves().count))
             for await event in stream {
                 if Task.isCancelled || gen != liveGeneration { return }
                 switch event {
                 case .info(let info):
-                    guard info.hasScore, !info.isBound, !info.pv.isEmpty,
-                          let eval = info.eval(whiteToMove: position.turn == .white) else { continue }
-                    let sans = position.sanLine(fromUCI: info.pv, maxPlies: 14)
-                    guard !sans.isEmpty else { continue }
-                    let line = EngineLine(rank: info.multipv, eval: eval, depth: info.depth, pv: info.pv,
-                                          text: position.numberedLine(fromUCI: info.pv, maxPlies: 14), sanMoves: sans)
-                    apply(line)
-                    if info.multipv == 1 { depth = info.depth }
-                    if let n = info.nps { nps = n }
+                    guard let snap = acc.accumulate(info) else { continue }
+                    var out: [EngineLine] = []
+                    for (i, pv) in snap.ranked.enumerated() {
+                        guard let eval = pv.eval(whiteToMove: position.turn == .white) else { continue }
+                        let sans = position.sanLine(fromUCI: pv.pv, maxPlies: 14)
+                        guard !sans.isEmpty else { continue }
+                        out.append(EngineLine(rank: i + 1, eval: eval, depth: pv.depth, pv: pv.pv,
+                                              text: position.numberedLine(fromUCI: pv.pv, maxPlies: 14), sanMoves: sans))
+                    }
+                    guard !out.isEmpty else { continue }
+                    pending = Pending(fen: fen, key: key, lines: out, depth: snap.depth, nodes: snap.nodes, nps: snap.nps)
+                    schedulePublish(gen: gen, cfg: cfg)
                 case .finished:
+                    flushPending(cfg: cfg, force: true)
                     searching = false
                 }
             }
-            if gen == liveGeneration { searching = false }
+            if gen == liveGeneration { flushPending(cfg: cfg, force: true); searching = false }
         } catch {
             engineLog.error("live search failed: \(String(describing: error), privacy: .public)")
             if gen == liveGeneration {
@@ -122,23 +172,72 @@ final class EngineController {
     }
 
     private func finish(fen: String, engine: UCIEngine) {
-        lines = []; linesFEN = fen; depth = 0; nps = 0; searching = false
+        flushTask?.cancel(); pending = nil
+        lines = []; linesFEN = fen; depth = 0; nps = 0; searching = false; shownKey = nil; shownNodes = 0; shownDepth = 0; shownLineCount = 0
         liveTask = Task { await engine.stop() }
     }
 
-    private func apply(_ line: EngineLine) {
-        if let i = lines.firstIndex(where: { $0.rank == line.rank }) { lines[i] = line }
-        else { lines.append(line); lines.sort { $0.rank < $1.rank } }
+    private static func cacheKey(_ fen: String, _ history: (rootFEN: String, moves: [String])?, _ lines: Int) -> String {
+        "\(history?.rootFEN ?? fen)|\((history?.moves ?? []).joined(separator: " "))|\(lines)"
+    }
+
+    private func touchCache(_ key: String) -> CachedEval? {
+        guard let hit = cache[key] else { return nil }
+        if let i = cacheOrder.firstIndex(of: key) { cacheOrder.remove(at: i) }
+        cacheOrder.append(key)
+        return hit
+    }
+
+    private func store(_ key: String, _ value: CachedEval) {
+        cache[key] = value
+        if let i = cacheOrder.firstIndex(of: key) { cacheOrder.remove(at: i) }
+        cacheOrder.append(key)
+        while cacheOrder.count > cacheLimit { cache[cacheOrder.removeFirst()] = nil }
+    }
+
+    /// Publishes the newest completed snapshot at most every `publishInterval`; holds back shallow first results
+    /// (depth < `minDepthToShow`) for up to `minWaitToShow` when nothing is shown yet.
+    private func schedulePublish(gen: Int, cfg: EngineConfig) {
+        let now = ContinuousClock.now
+        var due = lastPublish + publishInterval
+        if lines.isEmpty, let p = pending, p.depth < minDepthToShow { due = max(due, searchStart + minWaitToShow) }
+        if due <= now { flushPending(cfg: cfg, force: false); return }
+        if flushTask != nil, flushTask?.isCancelled == false, scheduledGen == gen { return }
+        scheduledGen = gen
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(until: due, clock: .continuous)
+            if Task.isCancelled { return }
+            guard let self, gen == self.liveGeneration else { return }
+            self.flushTask = nil
+            self.flushPending(cfg: cfg, force: false)
+        }
+    }
+
+    private func flushPending(cfg: EngineConfig, force: Bool) {
+        flushTask?.cancel(); flushTask = nil
+        guard let p = pending else { return }
+        pending = nil
+        // Never replace a stronger result (e.g. a cached deeper search) with a weaker one, unless the line count differs.
+        let sameCount = shownLineCount == p.lines.count
+        let stronger = p.nodes > 0 && shownNodes > 0 ? p.nodes >= shownNodes : p.depth >= shownDepth
+        guard lines.isEmpty || !sameCount || stronger else { return }
+        lines = p.lines; depth = p.depth; linesFEN = p.fen
+        if let n = p.nps { nps = n }
+        shownNodes = p.nodes; shownDepth = p.depth; shownLineCount = p.lines.count
+        lastPublish = .now
+        shownKey = p.key
+        store(p.key, CachedEval(lines: p.lines, depth: p.depth, nodes: p.nodes, nps: p.nps))
     }
 
     func stopLive() {
+        flushTask?.cancel(); pending = nil
         liveTask?.cancel()
         liveGeneration += 1
         searching = false
         if let engine { liveTask = Task { await engine.stop() } }
     }
 
-    func clearLines() { lines = []; linesFEN = nil; depth = 0; nps = 0 }
+    func clearLines() { flushTask?.cancel(); pending = nil; lines = []; linesFEN = nil; depth = 0; nps = 0; shownKey = nil; shownNodes = 0; shownDepth = 0; shownLineCount = 0 }
 
     // MARK: Fixed-depth (review)
 
@@ -181,5 +280,5 @@ final class EngineController {
 
     func shutdown() async { await engine?.shutdown() }
 
-    func newGame() { if let engine { Task { await engine.newGame() } } }
+    func newGame() { cache.removeAll(); cacheOrder.removeAll(); if let engine { Task { await engine.newGame() } } }
 }
