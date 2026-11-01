@@ -8,7 +8,6 @@
 //   complete({model, system, prompt, maxTokens, signal, onDelta, onProgress, onThinking}) -> {text, streamed}
 // Keys and tokens live only in the Keychain (via `vault`) and never appear in a reply.
 import { PublicError, SAFE_NAMES } from './errors.mjs';
-import { deviceSignIn, refresh as refreshGrok } from './grok-oauth.mjs';
 
 const hint = (system, max) => max ? `${system}\n\nKeep the answer under about ${max} tokens.`.trim() : system;
 const canceled = () => new PublicError('canceled', 'Canceled.');
@@ -31,7 +30,27 @@ export function publicError(e, { secrets = [], who = 'The provider', signal, cla
   return new PublicError('unavailable', msg || `${who} is unavailable. Try again later.`);
 }
 
-export function createProviders({ chatgpt, claude, byos, vault, fetch: fetcher = globalThis.fetch, now = Date.now, sleep }) {
+/** GrokError (fixed, safe text from @byos/grok-local) -> PublicError. */
+const GROK_CODES = { 'reconnect-required': 'reconnect-required', canceled: 'canceled', declined: 'auth-failed', expired: 'auth-failed', 'auth-failed': 'auth-failed', 'invalid-response': 'auth-failed', 'storage-unavailable': 'unavailable', unavailable: 'unavailable', busy: 'unavailable' };
+export const grokPublicError = e => new PublicError(GROK_CODES[e?.code] ?? 'unavailable', e instanceof Error ? e.message : 'Grok is unavailable.');
+
+/** Wraps a provider error that must not be retried by grok.run (it has already streamed output). */
+class Streamed extends Error { constructor(cause) { super(cause?.message); this.name = cause?.name ?? 'Error'; this.cause = cause; } }
+
+/** One-time startup migration: the old sidecar kept Grok OAuth tokens in the `grok` vault item; they now live in grok-local. */
+export async function migrateGrokTokens({ grok, vault }) {
+  const store = vault('grok');
+  let rec;
+  try { const raw = await store.get(); rec = raw ? JSON.parse(raw) : null; } catch { return false; }
+  if (rec?.kind !== 'oauth') return false;
+  if (typeof rec.access === 'string' && rec.access && typeof rec.expiresAt === 'number') {
+    await grok.importTokens({ access: rec.access, ...(typeof rec.refresh === 'string' && rec.refresh ? { refresh: rec.refresh } : {}), expiresAt: rec.expiresAt });
+  }
+  await store.delete();
+  return true;
+}
+
+export function createProviders({ chatgpt, claude, grok, byos, vault }) {
   const out = new Map();
 
   // --- ChatGPT: the existing chatgpt-local OAuth flow -------------------------------------------------
@@ -87,35 +106,35 @@ export function createProviders({ chatgpt, claude, byos, vault, fetch: fetcher =
     const store = vault(id);
     const read = async () => { const raw = await store.get(); try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
     const write = rec => store.set(JSON.stringify(rec));
-    /** The bearer credential, refreshing an OAuth access token that is about to expire. */
-    async function credential(signal) {
+    /** Runs fn(token) with the stored API key, or (OAuth providers) with a Grok subscription token that
+     * grok.run refreshes and retries once on 401. Errors come out as PublicError. `secrets` lists tokens to redact. */
+    async function withCredential(signal, fn) {
       const rec = await read();
-      if (!rec) throw new PublicError('reconnect-required', `Set up ${name} first.`);
-      if (rec.kind === 'key') return rec.key;
-      if (rec.expiresAt > now() + 60_000) return rec.access;
-      if (!rec.refresh) { await store.delete(); throw new PublicError('reconnect-required', `Sign in with ${name} again.`); }
-      try {
-        const next = await refreshGrok({ fetch: fetcher, refreshToken: rec.refresh, now, signal });
-        await write({ kind: 'oauth', ...next });
-        return next.access;
-      } catch (e) { if (e?.code === 'reconnect-required') await store.delete(); throw e; }
+      if (rec?.kind === 'key') {
+        try { return await fn(rec.key); } catch (e) { throw wrap(e instanceof Streamed ? e.cause : e, [rec.key], signal); }
+      }
+      if (!oauth) throw new PublicError('reconnect-required', `Set up ${name} first.`);
+      const seen = [];
+      try { return await grok.run(signal, tok => { seen.push(tok); return fn(tok); }); }
+      catch (e) { throw wrap(e instanceof Streamed ? e.cause : e, seen, signal); }
     }
-    const wrap = (e, secrets, signal) => publicError(e, { secrets, who: name, signal, classify: byos.classifyProviderError });
+    const wrap = (e, secrets, signal) => e?.name === 'GrokError' ? grokPublicError(e) : publicError(e, { secrets, who: name, signal, classify: byos.classifyProviderError });
     const list = async (key, signal) => (await provider.listModels(key, signal)).map(m => ({ id: m.id, name: m.name }));
     return {
       meta: { id, name, authKind, flow: oauth ? 'device' : '', setupText, setupURL },
       async status() {
         const rec = await read();
-        return { ready: !!rec, account: rec ? (rec.kind === 'oauth' ? `${name} account` : 'API key') : null };
+        if (rec?.kind === 'key') return { ready: true, account: 'API key' };
+        if (!oauth) return { ready: false, account: null };
+        try { const s = await grok.status(); return { ready: s.connected, account: s.connected ? (s.account?.label ?? `${name} account`) : null }; }
+        catch (e) { throw grokPublicError(e); }
       },
-      async listModels(signal) {
-        const key = await credential(signal);
-        try { return await list(key, signal); } catch (e) { throw wrap(e, [key], signal); }
-      },
+      listModels: signal => withCredential(signal, tok => list(tok, signal)),
       async signIn({ apiKey, emit, signal }) {
         if (oauth && !apiKey) {
-          const t = await deviceSignIn({ fetch: fetcher, emit, signal, now, ...(sleep ? { sleep } : {}) });
-          await write({ kind: 'oauth', ...t });
+          try { await grok.signIn({ onCode: ({ verificationUrl, userCode }) => { emit(verificationUrl, { userCode }); }, signal }); }
+          catch (e) { throw e?.name === 'GrokError' ? grokPublicError(e) : e; }
+          await store.delete();   // the subscription replaces any pasted key
           return {};
         }
         const key = typeof apiKey === 'string' ? apiKey.trim() : '';
@@ -128,19 +147,26 @@ export function createProviders({ chatgpt, claude, byos, vault, fetch: fetcher =
         }
         if (!models.length) throw new PublicError('auth-failed', `${name} accepted the key but offers no chat models.`);
         await write({ kind: 'key', key });
+        if (oauth) { try { await grok.disconnect(); } catch { /* a stale sign-in is harmless beside a key */ } }
         return {};
       },
-      async signOut() { await store.delete(); },
+      async signOut() {
+        await store.delete();
+        if (oauth) { try { await grok.disconnect(); } catch (e) { throw grokPublicError(e); } }
+      },
       async complete({ model, system, prompt, maxTokens, signal, onDelta, onThinking }) {
-        const key = await credential(signal);
         const sys = system ? (id === 'claudeAPI' ? system : hint(system, maxTokens)) : hint('', maxTokens);
         let text = '';
-        try {
-          for await (const ev of provider.stream(key, { model, signal, messages: [...(sys ? [{ role: 'system', content: sys }] : []), { role: 'user', content: prompt }] })) {
-            if (ev.type === 'text') { text += ev.text; onDelta?.(ev.text); }
-            else if (ev.type === 'reasoning') onThinking?.();   // the model is working; the app counts it as activity
-          }
-        } catch (e) { throw wrap(e, [key], signal); }
+        await withCredential(signal, async key => {
+          text = '';
+          let started = false;
+          try {
+            for await (const ev of provider.stream(key, { model, signal, messages: [...(sys ? [{ role: 'system', content: sys }] : []), { role: 'user', content: prompt }] })) {
+              if (ev.type === 'text') { started = true; text += ev.text; onDelta?.(ev.text); }
+              else if (ev.type === 'reasoning') onThinking?.();   // the model is working; the app counts it as activity
+            }
+          } catch (e) { throw started ? new Streamed(e) : e; }   // grok.run retries a 401 only before the first delta
+        });
         return { text, streamed: true };
       },
     };

@@ -2,10 +2,11 @@
 import { createInterface } from 'node:readline';
 import { createChatGptClient } from '@byos/chatgpt-local';
 import { createClaudeClient } from '@byos/claude-local';
+import { createGrokClient } from '@byos/grok-local';
 import * as byos from '@byos/providers';
 import { AsyncEntry } from '@napi-rs/keyring';
 import { createHandler } from './server.mjs';
-import { createProviders } from './providers.mjs';
+import { createProviders, migrateGrokTokens } from './providers.mjs';
 
 // stdout is the protocol channel; keep everything else off it.
 const write = (obj) => { try { process.stdout.write(JSON.stringify(obj) + '\n'); } catch { /* parent gone */ } };
@@ -22,6 +23,7 @@ const common = {
 };
 const chatgpt = createChatGptClient(common);
 const claude = createClaudeClient(common);
+const grok = createGrokClient({ ...common, namespace: 'chesslens' });
 
 // One Keychain item per key provider; the Swift side never sees its contents.
 const vault = (provider) => {
@@ -34,9 +36,12 @@ const vault = (provider) => {
 };
 
 const providers = createProviders({
-  chatgpt, claude, vault,
+  chatgpt, claude, grok, vault,
   byos: { claude: byos.claude, openrouter: byos.openrouter, grok: byos.grok, groq: byos.groq, huggingface: byos.huggingface, classifyProviderError: byos.classifyProviderError },
 });
+
+// Older builds kept the Grok OAuth tokens in the `grok` vault item; move them into grok-local once.
+await migrateGrokTokens({ grok, vault }).catch(() => {});
 
 const handle = createHandler({ providers, write, urlSink, probeStore: () => new AsyncEntry('app.chesslens.sidecar.probe', 'probe') });
 

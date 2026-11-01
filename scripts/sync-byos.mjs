@@ -28,7 +28,7 @@ if (!sourceArgument || !revisionArgument || extra.length || !/^[0-9a-f]{40}$/i.t
     temporary = await mkdtemp(join(tmpdir(), 'chess-lens-byos-sync-'));
     const script = join(temporary, 'vendor.mjs');
     await writeFile(script, exporter, { mode: 0o600 });
-    execFileSync(process.execPath, [script, '--source', source, '--ref', revision, '--out', out, '--mode', 'packages', '--packages', 'chatgpt-local,claude-local,core,providers', '--name-prefix', 'byos-', '--revision', join(out, 'BYOS_REVISION'), '--engine', 'omit'], { cwd: root, stdio: 'inherit' });
+    execFileSync(process.execPath, [script, '--source', source, '--ref', revision, '--out', out, '--mode', 'packages', '--packages', 'chatgpt-local,claude-local,core,grok-local,providers', '--name-prefix', 'byos-', '--revision', join(out, 'BYOS_REVISION'), '--engine', 'omit'], { cwd: root, stdio: 'inherit' });
     const recorded = await readFile(join(out, 'BYOS_REVISION'), 'utf8');
     if (!recorded.includes(revision)) throw Error('Exporter did not record the requested revision.');
     console.log('BYOS synced. Run the sidecar tests and build, then review and commit mac/Sidecar/byos.');
