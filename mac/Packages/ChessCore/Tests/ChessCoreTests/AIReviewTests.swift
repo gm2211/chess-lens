@@ -183,14 +183,76 @@ final class AIResponseTests: XCTestCase {
                 GameLesson.Example(move: "6...Nf6", why: "Only 25. Qh7 here."),
             ])],
             turningPoint: GameLesson.Example(move: "99. Ra1"))
-        let (g, unverified) = lesson.grounded(allowed: allowed) { Grounding.ply(of: $0, line: line) != nil }
+        let (g, unverified) = lesson.grounded(allowed: allowed, line: LessonLine(start: .start, sans: line))
         let ex = g.concepts[0].examples
-        XCTAssertEqual(ex.map(\.move), ["11. Bxb5+", "6...Nf6"])
-        XCTAssertEqual(ex[0].why, "Check with a developed piece.")
-        XCTAssertNil(ex[1].why)
+        XCTAssertEqual(ex.map(\.move), ["6...Nf6", "11. Bxb5+"])     // game order
+        XCTAssertEqual(ex[1].why, "Check with a developed piece.")
+        XCTAssertNil(ex[0].why)
+        // No story in the answer: one is made of the sorted examples.
+        XCTAssertEqual(g.concepts[0].story.map(\.at), ["6...Nf6", "11. Bxb5+"])
+        XCTAssertEqual(g.concepts[0].story.map(\.ply), [12, 21])
+        XCTAssertEqual(g.concepts[0].story[0].say, "Fast.")
+        XCTAssertEqual(g.concepts[0].story[1].say, "Check with a developed piece.")
         XCTAssertNil(g.turningPoint)
         XCTAssertEqual(g.headline, "Morphy won.")
         XCTAssertEqual(unverified, [])
+    }
+
+    func testStoryDecoding() {
+        let g = GameLesson.parse("""
+        {"concepts": [{"name": "King safety", "explanation": "x", "examples": [],
+          "story": [{"at": "start", "say": "Watch the black king.", "circles": ["e8", "zz", "E8", "d8"], "pause": 1.5},
+                    {"at": "12. O-O-O", "say": "White castles.", "arrows": ["d1d7", {"from": "b5", "to": "e8"}, "e"],
+                     "line": ["d8d7", "d1d7"], "pause": 99},
+                    {"say": "No at: the start."}, {"at": "3. d4"}]}]}
+        """)
+        let st = g?.concepts.first?.story ?? []
+        XCTAssertEqual(st.count, 3)
+        XCTAssertEqual(st[0].at, "start")
+        XCTAssertTrue(st[0].isStart)
+        XCTAssertEqual(st[0].circles, [Sq.parse("e8")!, Sq.parse("d8")!])
+        XCTAssertEqual(st[0].pause, 1.5)
+        XCTAssertEqual(st[1].arrows.map(\.uci), ["d1d7", "b5e8"])
+        XCTAssertEqual(st[1].line, ["d8d7", "d1d7"])
+        XCTAssertEqual(st[1].pause, GameLesson.StoryStep.maxPause)
+        XCTAssertTrue(st[2].isStart)
+    }
+
+    func testStoryGrounding() {
+        let sans = PGN.parse(MomentPickerTests.opera)[0].game.mainlineSAN
+        let line = LessonLine(start: .start, sans: sans)
+        let allowed = Grounding.allowed(sans)
+        let steps: [GameLesson.StoryStep] = [
+            .init(at: "11. Bxb5+", say: "The bishop checks. Later 30. Qh7 wins.", circles: [Sq.parse("e8")!]),
+            .init(at: "40. Kh1", say: "Not in the game."),
+            // After 6. Bc4 (ply 11) it's Black to move: Nf6 is legal, then an illegal king jump stops the line.
+            .init(at: "6. Bc4", say: "Black could play 6...Qd7 instead.", line: ["d8d7", "e1e8", "g1f3"]),
+            .init(at: "start", say: "Both kings start in the centre.", line: ["e2e4", "e7e5", "Nf3"]),
+            .init(at: "2...d6", say: "Only 25. Qh7 here."),
+        ]
+        let g = GameLesson.groundedStory(steps, allowed: allowed, line: line)
+        XCTAssertEqual(g.map(\.at), ["start", "6. Bc4", "11. Bxb5+"])
+        XCTAssertEqual(g.map(\.ply), [0, 11, 21])
+        XCTAssertEqual(g[0].line, ["e2e4", "e7e5", "g1f3"])       // SAN accepted, stored as UCI
+        XCTAssertEqual(g[1].line, ["d8d7"])                       // cut at the first illegal move
+        XCTAssertEqual(g[1].say, "Black could play 6...Qd7 instead.")   // its own line counts as grounded
+        XCTAssertEqual(g[2].say, "The bishop checks.")
+        XCTAssertEqual(g[2].circles, [Sq.parse("e8")!])
+        XCTAssertEqual(line.position(atPly: 0)?.fen, Position.startFEN)
+        XCTAssertNil(line.position(atPly: 40))
+    }
+
+    func testStoryCapsAndOrder() {
+        let sans = PGN.parse(MomentPickerTests.opera)[0].game.mainlineSAN
+        let line = LessonLine(start: .start, sans: sans)
+        let refs = ["17. Rd8#", "16. Qb8+", "15. Bxd7+", "14. Rd1", "13. Rxd7", "12. O-O-O", "11. Bxb5+", "10. Nxb5", "9. Bg5"]
+        let g = GameLesson.groundedStory(refs.map { .init(at: $0, say: "Look.") }, allowed: Grounding.allowed(sans), line: line)
+        XCTAssertEqual(g.count, GameLesson.StoryStep.maxSteps)
+        XCTAssertEqual(g.first?.at, "9. Bg5")
+        XCTAssertEqual(g.compactMap(\.ply), g.compactMap(\.ply).sorted())
+        let s = GameLesson.StoryStep(at: "1. e4", say: "x", circles: (0..<8).map { $0 }, arrows: [], line: Array(repeating: "e2e4", count: 9))
+        XCTAssertEqual(s.circles.count, 4)
+        XCTAssertEqual(s.line.count, 6)
     }
 
     func testGameLessonRawFallback() {
@@ -290,7 +352,9 @@ final class SummaryPromptTests: XCTestCase {
         XCTAssertTrue(SummaryPrompt.system(tool: true).contains("<engine fen="))
         XCTAssertFalse(SummaryPrompt.system(tool: false).contains("<engine"))
         let sys = SummaryPrompt.system(tool: false)
-        for key in [#""examples""#, #""why""#, #""arrows""#, #""squares""#] { XCTAssertTrue(sys.contains(key), key) }
+        for key in [#""examples""#, #""why""#, #""arrows""#, #""squares""#, #""story""#, #""at""#, #""say""#,
+                    #""circles""#, #""line""#, #""pause""#] { XCTAssertTrue(sys.contains(key), key) }
+        XCTAssertTrue(sys.contains("3-7 steps"))
         XCTAssertFalse(sys.contains(#""moves": ["#))
         XCTAssertTrue(CoachPrompt.system(tool: false).contains("\"concept\""))
     }

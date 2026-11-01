@@ -117,6 +117,17 @@ struct ContentView: View {
             return .handled
         }
         if press.modifiers.contains(.command) || press.modifiers.contains(.control) || press.modifiers.contains(.option) { return .ignored }
+        // While a lesson plays, Space / ← / → / Esc drive it; other keys (↑, ↓, F) keep their usual meaning and
+        // navigating with them ends the lesson.
+        if let p = app.lessonPlayer {
+            switch press.key {
+            case .space: p.togglePlay(); return .handled
+            case .leftArrow: p.previous(); return .handled
+            case .rightArrow: p.next(); return .handled
+            case .escape: app.closeLesson(); return .handled
+            default: break
+            }
+        }
         switch press.key {
         case .escape:
             guard app.lessonFocus != nil else { return .ignored }
@@ -152,23 +163,25 @@ struct BoardColumn: View {
                     } else {
                         EvalBar(eval: app.barEval, flipped: app.flipped)
                             .frame(height: side)
+                            .opacity(app.lessonPreview == nil ? 1 : 0.35)   // a demonstrated line isn't evaluated
+                            .animation(.easeOut(duration: 0.2), value: app.lessonPreview == nil)
                     }
                     BoardView(side: side)
                 }
                 .frame(width: side + barW + gap, height: side)
-                .overlay(alignment: app.position.turn == .white
+                .overlay(alignment: app.boardPosition.turn == .white
                          ? (app.flipped ? .topTrailing : .bottomTrailing)
                          : (app.flipped ? .bottomTrailing : .topTrailing)) {
-                    TurnDot(turn: app.position.turn)
+                    TurnDot(turn: app.boardPosition.turn)
                         .offset(x: 16)
                 }
-                .animation(.easeInOut(duration: 0.25), value: app.position.turn)
+                .animation(.easeInOut(duration: 0.25), value: app.boardPosition.turn)
                 .animation(.easeInOut(duration: 0.25), value: app.flipped)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             NavigationRow()
             if let session = app.playSession { PlayBanner(session: session) }
-            LessonCaption()
+            if let p = app.lessonPlayer, !app.hidesEvaluation { LessonPlayerBar(player: p) } else { LessonCaption() }
             CoachBar()
         }
         .padding(.horizontal, 18)

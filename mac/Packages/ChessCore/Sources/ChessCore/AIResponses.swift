@@ -127,12 +127,7 @@ public struct GameLesson: Equatable, Sendable {
             if let d = v as? [String: Any] {
                 guard let move = AIJSON.string(AIJSON.value(d, "move") ?? AIJSON.value(d, "ref") ?? AIJSON.value(d, "san"))
                 else { return nil }
-                let arrows = (AIJSON.value(d, "arrows") as? [Any] ?? []).compactMap { a -> Arrow? in
-                    if let s = AIJSON.string(a) { return Arrow(s) }
-                    if let o = a as? [String: Any], let f = AIJSON.string(AIJSON.value(o, "from")),
-                       let t = AIJSON.string(AIJSON.value(o, "to")) { return Arrow(f + t) }
-                    return nil
-                }
+                let arrows = parseArrows(AIJSON.value(d, "arrows"))
                 let squares = AIJSON.strings(AIJSON.value(d, "squares"))
                     .compactMap { Sq.parse($0.lowercased().trimmingCharacters(in: .whitespaces)) }
                 return Example(move: move, why: AIJSON.string(AIJSON.value(d, "why")), arrows: arrows, squares: squares)
@@ -151,10 +146,12 @@ public struct GameLesson: Equatable, Sendable {
         public var name: String
         public var explanation: String
         public var examples: [Example]
+        /// The narrated walkthrough of the idea across the game, in game order (see `StoryStep`).
+        public var story: [StoryStep]
         /// The cited move references, e.g. "14. Qh5".
         public var moves: [String] { examples.map(\.move) }
-        public init(name: String, explanation: String, examples: [Example] = []) {
-            self.name = name; self.explanation = explanation; self.examples = examples
+        public init(name: String, explanation: String, examples: [Example] = [], story: [StoryStep] = []) {
+            self.name = name; self.explanation = explanation; self.examples = examples; self.story = story
         }
         public init(name: String, explanation: String, moves: [String]) {
             self.init(name: name, explanation: explanation, examples: moves.map { Example(move: $0) })
@@ -202,8 +199,10 @@ public struct GameLesson: Equatable, Sendable {
                 // "examples" (current) or "moves" (older answers: plain strings, or objects).
                 let raw = AIJSON.value(d, "examples") ?? AIJSON.value(d, "moves")
                 let items: [Any] = raw as? [Any] ?? raw.map { [$0] } ?? []
+                let steps = (AIJSON.value(d, "story") as? [Any] ?? AIJSON.value(d, "steps") as? [Any] ?? [])
+                    .compactMap(StoryStep.parse)
                 g.concepts.append(Concept(name: name, explanation: AIJSON.string(AIJSON.value(d, "explanation")) ?? "",
-                                          examples: items.compactMap(Example.parse)))
+                                          examples: items.compactMap(Example.parse), story: steps))
             } else if let s = AIJSON.string(c) {
                 g.concepts.append(Concept(name: s, explanation: ""))
             }
@@ -219,9 +218,10 @@ public struct GameLesson: Equatable, Sendable {
     }
 
     /// Grounds the lesson against the game: prose sentences citing moves not in `allowed` are dropped (see
-    /// `Grounding.clean`; moves left only unverified are returned), move references `resolves` rejects are removed,
-    /// and an example's "why" loses any sentence citing an unsupported move.
-    public func grounded(allowed: Set<String>, resolves: (String) -> Bool) -> (lesson: GameLesson, unverified: [String]) {
+    /// `Grounding.clean`; moves left only unverified are returned), move references that aren't in `line` are
+    /// removed, and an example's "why" loses any sentence citing an unsupported move. Examples are put in game order.
+    /// Story steps are grounded too (see `groundedStory`); a concept without a story gets one made of its examples.
+    public func grounded(allowed: Set<String>, line: LessonLine) -> (lesson: GameLesson, unverified: [String]) {
         var unverified: [String] = []
         func c(_ s: String?) -> String? {
             guard let s else { return nil }
@@ -229,26 +229,49 @@ public struct GameLesson: Equatable, Sendable {
             for m in r.unverified where !unverified.contains(m) { unverified.append(m) }
             return r.text
         }
-        func ex(_ e: Example) -> Example? {
-            guard resolves(e.move) else { return nil }
+        func ex(_ e: Example) -> (Example, Int)? {
+            guard let ply = line.ply(of: e.move), !GameLesson.StoryStep.isStartRef(e.move) else { return nil }
             var out = e
             out.why = e.why.flatMap { w in
                 let p = Grounding.prune(w, allowed: allowed).text
                 return p.isEmpty ? nil : p
             }
-            return out
+            return (out, ply)
         }
         var out = GameLesson(headline: c(headline), story: c(story), white: c(white), black: c(black))
-        out.turningPoint = turningPoint.flatMap(ex)
-        out.concepts = concepts.map {
-            Concept(name: c($0.name) ?? $0.name, explanation: c($0.explanation) ?? "", examples: $0.examples.compactMap(ex))
+        out.turningPoint = turningPoint.flatMap(ex)?.0
+        out.concepts = concepts.map { concept in
+            let examples = concept.examples.compactMap(ex).enumerated()
+                .sorted { ($0.element.1, $0.offset) < ($1.element.1, $1.offset) }.map(\.element.0)
+            var g = Concept(name: c(concept.name) ?? concept.name, explanation: c(concept.explanation) ?? "",
+                            examples: examples)
+            g.story = Self.groundedStory(concept.story, allowed: allowed, line: line)
+            if g.story.isEmpty { g.story = g.synthesizedStory(plies: line.ply(of:)) }
+            return g
         }
         out.lessons = lessons.compactMap { c($0) }
         out.exercises = exercises.map {
-            Exercise(title: c($0.title) ?? $0.title, fromMove: $0.fromMove.flatMap { resolves($0) ? $0 : nil },
+            Exercise(title: c($0.title) ?? $0.title, fromMove: $0.fromMove.flatMap { line.ply(of: $0) != nil ? $0 : nil },
                      task: c($0.task) ?? $0.task, concept: $0.concept)
         }
         return (out, unverified)
+    }
+
+    /// Story steps whose `at` is in the line, in game order (ties keep the model's order), at most `maxSteps`.
+    /// A step's `line` is cut at its first illegal move; its narration loses sentences citing moves that are neither
+    /// allowed nor in its own line, and a step left with nothing to say is dropped.
+    public static func groundedStory(_ steps: [StoryStep], allowed: Set<String>, line: LessonLine) -> [StoryStep] {
+        var kept: [(StoryStep, Int, Int)] = []
+        for (i, s) in steps.enumerated() {
+            guard let ply = line.ply(of: s.at), let pos = line.position(atPly: ply) else { continue }
+            let demo = LessonLine.legalPrefix(s.line, from: pos)
+            let demoSAN = pos.sanLine(fromUCI: demo)
+            let say = Grounding.prune(s.say, allowed: allowed.union(Grounding.allowed(demoSAN))).text
+            guard !say.isEmpty else { continue }
+            kept.append((StoryStep(at: s.at, say: say, circles: s.circles, arrows: s.arrows, line: demo,
+                                   pause: s.pause, ply: ply), ply, i))
+        }
+        return kept.sorted { ($0.1, $0.2) < ($1.1, $1.2) }.prefix(StoryStep.maxSteps).map(\.0)
     }
 }
 
