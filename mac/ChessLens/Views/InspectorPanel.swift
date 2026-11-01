@@ -9,6 +9,10 @@ struct InspectorView: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
+        GeometryReader { geo in column(height: geo.size.height) }
+    }
+
+    private func column(height: Double) -> some View {
         VStack(spacing: 0) {
             PanelHeader()
             Divider()
@@ -20,7 +24,7 @@ struct InspectorView: View {
                 .frame(minHeight: 100)
             Divider()
             if app.ask.isOpen {
-                AskDrawer()
+                AskDrawer(available: height)
             } else {
                 AskBar()
             }

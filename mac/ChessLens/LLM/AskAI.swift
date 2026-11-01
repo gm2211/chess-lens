@@ -97,7 +97,8 @@ final class AskAI {
         status = .thinking; partial = nil
         askedAt = id; lastQuestion = q
         let turnsSoFar = turns
-        let extra = known.union(Grounding.allowed(AskPrompt.citedMoves(in: turns.map(\.question) + [q])))
+        let noted = AskPrompt.illegalMoveNotes(question: q, subject: ctx.subject).flatMap(\.sans)
+        let extra = known.union(Grounding.allowed(AskPrompt.citedMoves(in: turns.map(\.question) + [q]) + noted))
         task = Task { await run(q, ctx, turns: turnsSoFar, extra: extra) }
     }
 
@@ -151,7 +152,12 @@ final class AskAI {
         var out: [EngineToolRequest] = []
         // Bare pawn moves ("why not e5?") aren't citations elsewhere (they read like squares); here a legal one counts.
         let pushes = q.matches(of: /\b[a-h][1-8]\b/).map { String($0.output) }
-        for san in AskPrompt.citedMoves(in: [q]) + pushes {
+        // Spoken moves ("queen to d1", "knight f3") count like SAN ones when legal in either position.
+        let spoken = AskPrompt.namedMoves(in: q).flatMap { n in
+            [s.before, s.position].compactMap { $0 }.first { !AskPrompt.legalSANs(for: n, in: $0).isEmpty }
+                .map { AskPrompt.legalSANs(for: n, in: $0) } ?? []
+        }
+        for san in AskPrompt.citedMoves(in: [q]) + spoken + pushes {
             let from = [s.before, s.position].compactMap { $0 }.first { (try? $0.parseSAN(san)) != nil }
             guard let from else { continue }
             let r = EngineToolRequest(fen: from.fen, moves: [san])

@@ -32,19 +32,65 @@ struct AskBar: View {
 struct AskDrawer: View {
     @Environment(AppModel.self) private var app
     @FocusState private var focused: Bool
+    /// The inspector's height; the drawer never grows past it minus the room the content above needs.
+    let available: Double
+    @AppStorage("ask.drawerHeight") private var storedHeight = AskDrawer.defaultHeight
+    /// Height when the current drag began; nil when not dragging.
+    @State private var dragStart: Double?
+    @State private var hovering = false
+
+    static let defaultHeight = 300.0
+    /// Header + input + about two lines of conversation.
+    static let minHeight = 190.0
+    /// What the inspector keeps for its header, engine strip, a little move list and the footer.
+    static let reservedAbove = 300.0
+
+    static func clamp(_ h: Double, available: Double) -> Double {
+        max(minHeight, min(h, available - reservedAbove))
+    }
+
+    private var height: Double { Self.clamp(storedHeight, available: available) }
 
     var body: some View {
         VStack(spacing: 0) {
+            grabber
             header
             Divider()
             transcript
             Divider()
             composer
         }
-        .frame(height: 300)
+        .frame(height: height)
         .background(Theme.surface)
         .onAppear { focused = true }
         .onExitCommand { app.ask.close() }
+    }
+
+    /// A thin grabber on the top edge: drag to resize, double-click for the default height.
+    private var grabber: some View {
+        ZStack {
+            Capsule().fill(Theme.ink3.opacity(hovering || dragStart != nil ? 0.9 : 0.45)).frame(width: 36, height: 3)
+        }
+        .frame(maxWidth: .infinity).frame(height: 10)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            hovering = inside
+            if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { v in
+                    let start = dragStart ?? height
+                    dragStart = start
+                    // Dragging up (negative y) makes the drawer taller.
+                    storedHeight = Self.clamp(start - v.translation.height, available: available)
+                }
+                .onEnded { _ in dragStart = nil }
+        )
+        .onTapGesture(count: 2) { storedHeight = Self.defaultHeight }
+        .onDisappear { if hovering { NSCursor.pop(); hovering = false } }
+        .help("Drag to resize; double-click to reset")
+        .accessibilityLabel("Resize Ask AI")
     }
 
     // MARK: Header
