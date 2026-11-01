@@ -5,6 +5,7 @@ import ChessCore
 @main
 struct ChessLensApp: App {
     @State private var model = AppModel()
+    @AppStorage(SettingsTab.key) private var settingsTab = SettingsTab.engine
 
     init() {
         // Writing to a dead engine process must not kill the app.
@@ -26,15 +27,18 @@ struct ChessLensApp: App {
         .commands { AppCommands(model: model) }
 
         Settings {
-            TabView {
+            TabView(selection: $settingsTab) {
                 EngineSettingsForm(settings: model.engine.settings)
                     .padding(20).frame(width: 380)
                     .tabItem { Label("Engine", systemImage: "cpu") }
+                    .tag(SettingsTab.engine)
                 AIProvidersView()
-                .tabItem { Label("AI", systemImage: "sparkles") }
+                    .tabItem { Label("AI", systemImage: "sparkles") }
+                    .tag(SettingsTab.ai)
                 NarrationSettingsView()
-                    .padding(20).frame(width: 380)
+                    .frame(width: 480).frame(minHeight: 460)
                     .tabItem { Label("Voice", systemImage: "waveform") }
+                    .tag(SettingsTab.voice)
             }
         }
     }

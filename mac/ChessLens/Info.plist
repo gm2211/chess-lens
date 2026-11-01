@@ -40,6 +40,6 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>Étude. Includes Stockfish 18 (GPLv3), see Stockfish-Copying.txt, and the Kokoro-82M voice (Apache-2.0) via sherpa-onnx (Apache-2.0).</string>
+	<string>Étude. Includes Stockfish 18 (GPLv3), see Stockfish-Copying.txt, and sherpa-onnx (Apache-2.0) to run the optional, downloadable Kokoro-82M voice (Apache-2.0).</string>
 </dict>
 </plist>
