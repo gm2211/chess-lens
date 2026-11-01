@@ -69,6 +69,8 @@ struct BoardView: View {
     /// The arrows to draw (best first) and the targets of overlapping alternatives to mark with a ring.
     private var arrowPlan: (arrows: [BoardArrow], dots: [(Square, Double)]) {
         if app.hidesEvaluation { return ([], []) }
+        // The guided review owns the board: its marks only (none while a question is open).
+        if let w = app.walkthrough { return (w.marks.arrows, []) }
         if let st = lessonStep {
             return (st.arrows.map { BoardArrow(from: $0.from, to: $0.to, kind: .lesson, opacity: 0.82) }, [])
         }
@@ -161,6 +163,7 @@ struct BoardView: View {
         // Captured pieces fade out (and come back in when stepping backwards or when a line preview ends).
         .animation(.easeOut(duration: 0.2), value: app.currentID)
         .animation(.easeOut(duration: 0.2), value: app.lessonPlayer?.linePly)
+        .animation(.easeOut(duration: 0.2), value: app.walkthrough?.epoch)
         .frame(width: side, height: side, alignment: .topLeading)
         .allowsHitTesting(false)
     }
@@ -210,8 +213,8 @@ struct BoardView: View {
 
     /// Rings around the squares the lesson step talks about, popping in when the step starts.
     private func circleLayer(_ g: BoardGeometry) -> some View {
-        let squares = lessonStep?.circles ?? []
-        let epoch = app.lessonPlayer?.stepEpoch ?? 0
+        let squares = lessonStep?.circles ?? (app.hidesEvaluation ? nil : app.walkthrough?.marks.circles) ?? []
+        let epoch = app.lessonPlayer?.stepEpoch ?? app.walkthrough?.epoch ?? 0
         return ZStack(alignment: .topLeading) {
             ForEach(squares, id: \.self) { sq in
                 LessonRing(cell: g.cell)
@@ -296,6 +299,10 @@ struct BoardView: View {
                 if !gestureActive {
                     // Touching the board during a lesson ends it, so the move is made on the real position.
                     if app.lessonPlayer != nil { app.closeLesson() }
+                    // A guided-review question takes the move as a try (a wrong try's preview clears first).
+                    if let w = app.walkthrough {
+                        if w.acceptsMove { w.clearAttempt() } else { app.closeLesson() }
+                    }
                     gestureActive = true
                     let down = g.square(at: v.startLocation)
                     wasSelectedAtStart = (selected == down)
@@ -338,7 +345,7 @@ struct BoardView: View {
             return true
         }
         selected = nil
-        app.play(moves[0])
+        app.boardMove(moves[0])
         return true
     }
 
@@ -356,7 +363,7 @@ struct BoardView: View {
                     Button {
                         let m = Move(from: promo.from, to: promo.to, promotion: t)
                         promotion = nil; selected = nil
-                        app.play(m)
+                        app.boardMove(m)
                     } label: {
                         Image(Piece(color, t).assetName).resizable().padding(g.cell * 0.04)
                             .frame(width: g.cell, height: g.cell)

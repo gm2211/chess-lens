@@ -148,6 +148,15 @@ struct ContentView: View {
         if press.modifiers.contains(.command) || press.modifiers.contains(.control) || press.modifiers.contains(.option) { return .ignored }
         // While a lesson plays, Space / ← / → / Esc drive it; other keys (↑, ↓, F) keep their usual meaning and
         // navigating with them ends the lesson.
+        if let w = app.walkthrough {
+            switch press.key {
+            case .space: w.togglePlay(); return .handled
+            case .leftArrow: w.previous(); return .handled
+            case .rightArrow: w.next(); return .handled
+            case .escape: app.closeLesson(); return .handled
+            default: break
+            }
+        }
         if let p = app.lessonPlayer {
             switch press.key {
             case .space: p.togglePlay(); return .handled
@@ -210,7 +219,8 @@ struct BoardColumn: View {
             }
             NavigationRow()
             if let session = app.playSession { PlayBanner(session: session) }
-            if let p = app.lessonPlayer, !app.hidesEvaluation { LessonPlayerBar(player: p) } else { LessonCaption() }
+            if let w = app.walkthrough, !app.hidesEvaluation { BeatCard(walkthrough: w) }
+            else if let p = app.lessonPlayer, !app.hidesEvaluation { LessonPlayerBar(player: p) } else { LessonCaption() }
         }
         .padding(.horizontal, 18)
         .padding(.top, 14)

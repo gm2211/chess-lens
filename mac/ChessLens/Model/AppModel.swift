@@ -31,17 +31,26 @@ final class AppModel {
             if lessonFocus?.nodeID != currentID { lessonFocus = nil }   // moving away ends the illustration
             followLine()
             if let p = lessonPlayer, p.nodeID != currentID { lessonPlayer = nil }   // and the lesson being played
+            if let w = walkthrough, w.nodeID != currentID { walkthrough = nil }     // and the guided review
         }
     }
     /// The end of the line the move list shows (root → `lineTip`); `currentID` is always on it. It changes
     /// only when the user switches lines, so the move list can read it without rebuilding on every move.
     private(set) var lineTip = 0
     private(set) var epoch = 0 {                     // bumps when a different game is loaded
-        didSet { lessonFocus = nil; lessonPlayer = nil }
+        didSet { lessonFocus = nil; lessonPlayer = nil; walkthrough = nil }
     }
     /// A concept's story being played on the board (see AppModel+Lesson).
     var lessonPlayer: LessonPlayer? {
         didSet { if oldValue !== lessonPlayer { oldValue?.stop() } }
+    }
+    /// The guided walk through the game's story beats (see AppModel+Beats).
+    var walkthrough: BeatWalkthrough? {
+        didSet {
+            guard oldValue !== walkthrough else { return }
+            oldValue?.stop()
+            if oldValue?.hidesEngine == true { refreshEngine() }
+        }
     }
     /// A summary example being illustrated on the board: its caption under the board and its arrows/squares on it.
     private(set) var lessonFocus: LessonFocus?
@@ -261,7 +270,7 @@ final class AppModel {
         layoutCache = [:]
         review.reset()
         ask.reset()
-        lessonFocus = nil; lessonPlayer = nil
+        lessonFocus = nil; lessonPlayer = nil; walkthrough = nil
         currentID = cur
         didMove()
     }
@@ -294,7 +303,7 @@ final class AppModel {
         layoutCache = [:]
         review.reset()
         ask.reset()
-        lessonFocus = nil; lessonPlayer = nil
+        lessonFocus = nil; lessonPlayer = nil; walkthrough = nil
         currentID = newCurrent
         didMove()
         showToast("Cleared \(removed) explored move\(removed == 1 ? "" : "s")")
@@ -323,7 +332,7 @@ final class AppModel {
         layoutCache = [:]
         review.reset()
         ask.reset()
-        lessonFocus = nil; lessonPlayer = nil
+        lessonFocus = nil; lessonPlayer = nil; walkthrough = nil
         currentID = newCurrent
         didMove()
         showToast("Removed \(removed) side-line move\(removed == 1 ? "" : "s")")

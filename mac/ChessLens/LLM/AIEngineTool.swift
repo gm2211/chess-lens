@@ -47,6 +47,28 @@ actor ToolEngine {
         }
         return (lines, depth)
     }
+
+    /// One line (White's view) for the position reached by `moves` from `rootFEN`, sent as history so the engine
+    /// sees repetitions: the find-the-better-move check (depth 16 or 1.5 s).
+    func evaluate(rootFEN: String, moves: [String], whiteToMove: Bool, depth: Int = 16,
+                  milliseconds: Int = 1500) async throws -> EngineToolLine? {
+        await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        if engine == nil {
+            guard let url = UCIEngine.defaultExecutableURL else { throw EngineError.executableMissing }
+            engine = UCIEngine(executableURL: url, threads: 2, hash: 64)
+        }
+        let stream = try await engine!.search(fen: rootFEN, moves: moves, limit: .depthTime(depth: depth, ms: milliseconds),
+                                              multiPV: 1)
+        var latest: UCIInfo?
+        for await event in stream {
+            if Task.isCancelled { break }
+            if case .info(let i) = event, i.hasScore, !i.isBound, !i.pv.isEmpty, i.multipv == 1 { latest = i }
+        }
+        guard let i = latest, let e = i.eval(whiteToMove: whiteToMove) else { return nil }
+        return EngineToolLine(eval: e, pv: i.pv)
+    }
 }
 
 /// An answer that went through the engine-tool loop and the move check.

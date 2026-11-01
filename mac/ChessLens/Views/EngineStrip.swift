@@ -34,7 +34,7 @@ struct EngineStrip: View {
 
     /// The engine's lines for the position on the board, empty while they are stale or the engine is idle.
     private var liveLines: [EngineLine] {
-        guard app.engineEnabled, !app.review.running, app.engine.linesFEN == app.position.fen else { return [] }
+        guard app.engineEnabled, !app.review.running, !app.quizHidesEngine, app.engine.linesFEN == app.position.fen else { return [] }
         if case .failed = app.engine.status { return [] }
         return app.engine.lines
     }
@@ -49,6 +49,8 @@ struct EngineStrip: View {
             status("hourglass", "Live analysis resumes when the review ends.")
         } else if let end = app.game.gameEnd(at: app.currentID) {
             status("flag.checkered", end.title)
+        } else if app.quizHidesEngine {
+            status("eye.slash", "Engine lines hidden while you look for the move.")
         } else if let best = lines.first {
             Button { expanded.toggle() } label: {
                 HStack(spacing: 8) {
