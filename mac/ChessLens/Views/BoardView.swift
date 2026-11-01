@@ -1,14 +1,6 @@
 import SwiftUI
 import ChessCore
 
-struct BoardArrow: Equatable {
-    var from: Square
-    var to: Square
-    var rank: Int
-    var kind: Kind = .engine
-    enum Kind { case engine, best, threat, lesson }
-}
-
 /// Maps squares to points for a board drawn with White (or Black) at the bottom.
 struct BoardGeometry {
     var side: CGFloat
@@ -57,8 +49,8 @@ struct BoardView: View {
         guard review.hasResults, let e = review.entries[app.currentID], e.cls?.isError == true,
               let pid = app.node.parent else { return [] }
         var out: [BoardArrow] = []
-        if let m = e.pv.first.flatMap({ Move(uci: $0) }) { out.append(BoardArrow(from: m.from, to: m.to, rank: 2, kind: .threat)) }
-        if let m = review.entries[pid]?.best.flatMap({ Move(uci: $0) }) { out.append(BoardArrow(from: m.from, to: m.to, rank: 2, kind: .best)) }
+        if let m = e.pv.first.flatMap({ Move(uci: $0) }) { out.append(BoardArrow(from: m.from, to: m.to, kind: .threat, opacity: 0.78)) }
+        if let m = review.entries[pid]?.best.flatMap({ Move(uci: $0) }) { out.append(BoardArrow(from: m.from, to: m.to, kind: .best, opacity: 0.78)) }
         return out
     }
 
@@ -74,26 +66,40 @@ struct BoardView: View {
         return p.current.step
     }
 
-    private var arrows: [BoardArrow] {
-        if app.hidesEvaluation { return [] }
+    /// The arrows to draw (best first) and the targets of overlapping alternatives to mark with a ring.
+    private var arrowPlan: (arrows: [BoardArrow], dots: [(Square, Double)]) {
+        if app.hidesEvaluation { return ([], []) }
         if let st = lessonStep {
-            return st.arrows.map { BoardArrow(from: $0.from, to: $0.to, rank: 1, kind: .lesson) }
+            return (st.arrows.map { BoardArrow(from: $0.from, to: $0.to, kind: .lesson, opacity: 0.82) }, [])
         }
         // An illustrated example owns the board: only its arrows, so the point isn't lost among engine lines.
         if let f = lessonFocus, !f.arrows.isEmpty || !f.squares.isEmpty {
-            return f.arrows.map { BoardArrow(from: $0.from, to: $0.to, rank: 1, kind: .lesson) }
+            return (f.arrows.map { BoardArrow(from: $0.from, to: $0.to, kind: .lesson, opacity: 0.82) }, [])
         }
-        let extra = reviewArrows
-        var out = extra
+        var all = reviewArrows
         if app.engineEnabled, app.engine.linesFEN == app.position.fen, !app.review.running {
-            out += app.engine.lines.prefix(3).compactMap { l -> BoardArrow? in
-                guard let u = l.firstMove, let m = Move(uci: u) else { return nil }
-                // The live line duplicates a review arrow: keep the review one.
-                if extra.contains(where: { $0.from == m.from && $0.to == m.to }) { return nil }
-                return BoardArrow(from: m.from, to: m.to, rank: l.rank)
+            let lines = app.engine.lines.sorted { $0.rank < $1.rank }
+            if let best = lines.first {
+                let mover = app.position.turn
+                for l in lines.prefix(3) {
+                    guard let u = l.firstMove, let m = Move(uci: u) else { continue }
+                    let gap = winPercent(best.eval, for: mover) - winPercent(l.eval, for: mover)
+                    if l.rank != best.rank && gap > ArrowGeometry.maxAlternativeGap { continue }
+                    if l.rank == best.rank {
+                        all.append(BoardArrow(from: m.from, to: m.to, primary: true, opacity: 0.9))
+                    } else {
+                        all.append(BoardArrow(from: m.from, to: m.to, primary: false, opacity: ArrowGeometry.alternativeOpacity(gap: gap)))
+                    }
+                }
             }
         }
-        return out
+        // Review arrows come first and win; then the engine's best, then alternatives. Same move twice keeps the first.
+        var seen = Set<Int>()
+        all = all.filter { seen.insert($0.from * 64 + $0.to).inserted }
+        let resolved = ArrowGeometry.resolveOverlaps(all.map { ArrowCandidate(from: $0.from, to: $0.to) })
+        let kept = resolved.arrows.compactMap { c in all.first { $0.from == c.from && $0.to == c.to } }
+        let dots = resolved.dots.map { sq in (sq, all.first { $0.to == sq }?.opacity ?? 0.4) }
+        return (kept, dots)
     }
 
     var body: some View {
@@ -107,7 +113,7 @@ struct BoardView: View {
 
             circleLayer(g)
 
-            Canvas { ctx, _ in drawArrows(&ctx, g) }
+            Canvas { ctx, _ in let plan = arrowPlan; ArrowPainter.draw(&ctx, arrows: plan.arrows, dots: plan.dots, geo: g) }
                 .frame(width: side, height: side)
                 .allowsHitTesting(false)
 
@@ -226,33 +232,6 @@ struct BoardView: View {
                 let d = cell * 0.3
                 ctx.fill(Path(ellipseIn: CGRect(x: r.midX - d / 2, y: r.midY - d / 2, width: d, height: d)), with: .color(Theme.dot))
             }
-        }
-    }
-
-    private func drawArrows(_ ctx: inout GraphicsContext, _ g: BoardGeometry) {
-        for a in arrows.reversed() {
-            let p0 = g.center(a.from), p1 = g.center(a.to)
-            let dx = p1.x - p0.x, dy = p1.y - p0.y
-            let len = hypot(dx, dy)
-            guard len > 1 else { continue }
-            let ux = dx / len, uy = dy / len
-            let width = g.cell * (a.rank == 1 ? 0.17 : 0.12)
-            let head = g.cell * (a.rank == 1 ? 0.42 : 0.34)
-            let start = CGPoint(x: p0.x + ux * g.cell * 0.28, y: p0.y + uy * g.cell * 0.28)
-            let tip = CGPoint(x: p1.x - ux * g.cell * 0.1, y: p1.y - uy * g.cell * 0.1)
-            let base = CGPoint(x: tip.x - ux * head, y: tip.y - uy * head)
-            var shaft = Path(); shaft.move(to: start); shaft.addLine(to: base)
-            var tri = Path()
-            tri.move(to: tip)
-            tri.addLine(to: CGPoint(x: base.x - uy * head * 0.55, y: base.y + ux * head * 0.55))
-            tri.addLine(to: CGPoint(x: base.x + uy * head * 0.55, y: base.y - ux * head * 0.55))
-            tri.closeSubpath()
-            let opacity = a.kind == .engine ? (a.rank == 1 ? 0.85 : (a.rank == 2 ? 0.55 : 0.38)) : a.kind == .lesson ? 0.82 : 0.6
-            let color = a.kind == .threat ? Theme.blund : a.kind == .lesson ? Theme.lesson : Theme.arrow
-            var layer = ctx
-            layer.opacity = opacity
-            layer.stroke(shaft, with: .color(color), style: StrokeStyle(lineWidth: width, lineCap: .round))
-            layer.fill(tri, with: .color(color))
         }
     }
 
