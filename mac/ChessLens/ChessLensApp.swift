@@ -32,6 +32,9 @@ struct ChessLensApp: App {
                     .tabItem { Label("Engine", systemImage: "cpu") }
                 AIProvidersView()
                 .tabItem { Label("AI", systemImage: "sparkles") }
+                NarrationSettingsView()
+                    .padding(20).frame(width: 380)
+                    .tabItem { Label("Voice", systemImage: "waveform") }
             }
         }
     }

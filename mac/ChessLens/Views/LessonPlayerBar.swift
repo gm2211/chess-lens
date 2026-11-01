@@ -45,10 +45,7 @@ struct LessonPlayerBar: View {
                 transport("forward.fill", "Next step (\u{2192})", enabled: player.canGoForward) { player.next() }
                 dots.padding(.leading, 8)
                 Spacer(minLength: 6)
-                transport(player.narrate ? "speaker.wave.2.fill" : "speaker.slash.fill",
-                          player.narrate ? "Mute the narration" : "Read the lesson aloud", enabled: true) {
-                    player.narrate.toggle()
-                }
+                NarrationMenu(player: player)
             }
         }
         .padding(.leading, 14).padding(.trailing, 8).padding(.top, 8).padding(.bottom, 6)

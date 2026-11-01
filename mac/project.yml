@@ -21,6 +21,8 @@ packages:
     path: Packages/ChessCore
   BoardVision:
     path: Packages/BoardVision
+  KokoroTTS:
+    path: Packages/KokoroTTS
 targets:
   ChessLens:
     type: application
@@ -34,6 +36,7 @@ targets:
     dependencies:
       - package: ChessCore
       - package: BoardVision
+      - package: KokoroTTS
     info:
       path: ChessLens/Info.plist
       properties:
@@ -43,7 +46,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: "14.0"
         LSApplicationCategoryType: public.app-category.board-games
-        NSHumanReadableCopyright: "Étude. Includes Stockfish 18 (GPLv3), see Stockfish-Copying.txt."
+        NSHumanReadableCopyright: "Étude. Includes Stockfish 18 (GPLv3), see Stockfish-Copying.txt, and the Kokoro-82M voice (Apache-2.0) via sherpa-onnx (Apache-2.0)."
         CFBundleDocumentTypes:
           - CFBundleTypeName: Portable Game Notation
             CFBundleTypeRole: Viewer
@@ -67,6 +70,13 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         # Apple Intelligence (macOS 26+) is only touched behind #available; weak-link so macOS 14 still launches.
         OTHER_LDFLAGS: "-weak_framework FoundationModels"
+        # sherpa-onnx + onnxruntime static libraries for the Kokoro voice (scripts/fetch-kokoro.sh).
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/vendor/kokoro/lib"
+    preBuildScripts:
+      - name: Check Kokoro voice
+        basedOnDependencyAnalysis: false
+        script: |
+          [ -f "${SRCROOT}/vendor/kokoro/lib/libsherpa-onnx-c-api.a" ] || { echo "error: the Kokoro voice is missing at ${SRCROOT}/vendor/kokoro. Run mac/scripts/fetch-kokoro.sh first." >&2; exit 1; }
     postCompileScripts:
       - name: Embed Stockfish
         basedOnDependencyAnalysis: false
@@ -76,3 +86,7 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           "${SRCROOT}/scripts/embed-sidecar.sh"
+      - name: Embed Kokoro voice
+        basedOnDependencyAnalysis: false
+        script: |
+          "${SRCROOT}/scripts/embed-kokoro.sh"
