@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import AppKit
 import ChessCore
 
 struct EngineLine: Identifiable, Equatable {
@@ -31,7 +32,13 @@ final class EngineController {
     private(set) var nps = 0
     private(set) var searching = false
     /// Why live analysis is not running for the position on the board (nil while it searches).
-    enum PauseReason: Equatable { case manual, cool(CoolDownReason) }
+    enum PauseReason: Equatable {
+        case manual, cool(CoolDownReason)
+        /// The per-position time budget ran out; "Keep thinking" continues.
+        case budget
+        /// The user is not looking (app in the background, window hidden, screen locked); resumes by itself.
+        case inactive
+    }
     private(set) var pauseReason: PauseReason?
 
     var isAvailable: Bool { engine != nil }
@@ -46,6 +53,11 @@ final class EngineController {
     private var coolDown = CoolDown()
     private var pausedKeys: Set<String> = []       // positions the user stopped by hand (cache keys)
     private var currentKey: String?
+    private var ledger = EngineBudgetLedger()
+    private(set) var gate = ActivityGate()
+    private var budgetTask: Task<Void, Never>?
+    private var accountingKey: String?
+    private var accountingStart = ContinuousClock.now
 
     // Smooth publishing: lines change once per completed depth, throttled, never regress below a stronger cached result.
     private struct CachedEval {
@@ -77,11 +89,88 @@ final class EngineController {
         if engine == nil { status = .failed("The Stockfish engine is missing from this build.") }
         settings.onChange = { [weak self] old, new in self?.settingsChanged(old, new) }
         updateCoolDown()
+        observeActivity()
         for name in [ProcessInfo.thermalStateDidChangeNotification, Notification.Name.NSProcessInfoPowerStateDidChange] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.heatChanged() }
             }
         }
+    }
+
+    // MARK: Time budget and activity
+
+    /// Adds the time the current search has run to the position's ledger entry and stops its budget timer.
+    private func settle() {
+        budgetTask?.cancel(); budgetTask = nil
+        guard let k = accountingKey else { return }
+        accountingKey = nil
+        let d = ContinuousClock.now - accountingStart
+        let secs = Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
+        ledger.record(k, elapsed: secs)
+    }
+
+    /// Starts the search clock for `key` and arms a timer that ends the search when the budget is used up.
+    private func beginAccounting(key: String, gen: Int) {
+        settle()
+        accountingKey = key
+        accountingStart = .now
+        guard let left = ledger.remaining(key, budget: settings.config.budgetSeconds) else { return }
+        budgetTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(left))
+            if Task.isCancelled { return }
+            self?.budgetExpired(gen: gen)
+        }
+    }
+
+    private func budgetExpired(gen: Int) {
+        guard gen == liveGeneration, let engine, searching else { return }
+        settle()
+        flushPending(cfg: settings.config, force: true)
+        liveTask?.cancel()
+        liveGeneration += 1
+        searching = false
+        pauseReason = .budget
+        liveTask = Task { await engine.stop() }
+    }
+
+    /// "Keep thinking": another budget period for the position on the board (no limit when the setting is Unlimited).
+    func keepThinking() {
+        guard let currentKey else { return }
+        ledger.extend(currentKey, budget: settings.config.budgetSeconds)
+        onSettingsApplied?()
+    }
+
+    private func observeActivity() {
+        let nc = NotificationCenter.default, ws = NSWorkspace.shared.notificationCenter
+        func watch(_ center: NotificationCenter, _ name: Notification.Name, _ change: @escaping @Sendable (inout ActivityGate) -> Void) {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateGate(change) }
+            }
+        }
+        watch(nc, NSApplication.didBecomeActiveNotification) { $0.appActive = true }
+        watch(nc, NSApplication.didResignActiveNotification) { $0.appActive = false }
+        watch(ws, NSWorkspace.screensDidSleepNotification) { $0.screenAwake = false }
+        watch(ws, NSWorkspace.screensDidWakeNotification) { $0.screenAwake = true }
+        watch(ws, NSWorkspace.sessionDidResignActiveNotification) { $0.screenAwake = false }
+        watch(ws, NSWorkspace.sessionDidBecomeActiveNotification) { $0.screenAwake = true }
+        for name in [NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                     NSWindow.didChangeOcclusionStateNotification] {
+            nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    let visible = NSApplication.shared.windows.contains {
+                        $0.canBecomeMain && $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible)
+                    }
+                    self?.updateGate { $0.windowVisible = visible }
+                }
+            }
+        }
+    }
+
+    private func updateGate(_ change: (inout ActivityGate) -> Void) {
+        let before = gate
+        change(&gate)
+        guard gate != before, gate.shouldRun != before.shouldRun else { return }
+        onSettingsApplied?()
     }
 
     // MARK: Pause / continue
@@ -108,6 +197,7 @@ final class EngineController {
     /// Stops the search for the position on the board and freezes its lines until `resume()`.
     func pause() {
         guard let engine, let key = currentKey, searching else { return }
+        settle()
         flushPending(cfg: settings.config, force: true)
         pausedKeys.insert(key)
         liveTask?.cancel()
@@ -122,7 +212,8 @@ final class EngineController {
         switch pauseReason {
         case .manual?: if let currentKey { pausedKeys.remove(currentKey) }
         case .cool?: coolDown.continueAnyway()
-        case nil: return
+        case .budget?: keepThinking(); return
+        case .inactive?, nil: return
         }
         onSettingsApplied?()
     }
@@ -143,6 +234,7 @@ final class EngineController {
     /// Starts (or restarts, after a short debounce) live analysis of `position`.
     /// `history` is the root FEN and the moves leading to `position` (`Game.engineHistory`), so Stockfish sees repetitions.
     func analyze(_ position: Position, history: (rootFEN: String, moves: [String])? = nil, debounce: Duration = .milliseconds(140)) {
+        settle()
         liveTask?.cancel()
         guard let engine else { return }
         liveGeneration += 1
@@ -163,10 +255,14 @@ final class EngineController {
             }
         }
         currentKey = key
-        if let cool = coolDown.reason {
+        if !gate.shouldRun {
+            pauseReason = .inactive
+        } else if let cool = coolDown.reason {
             pauseReason = .cool(cool)
         } else if pausedKeys.contains(key) {
             pauseReason = .manual
+        } else if ledger.isExhausted(key, budget: cfg.budgetSeconds) {
+            pauseReason = .budget
         } else {
             pauseReason = nil
         }
@@ -193,6 +289,7 @@ final class EngineController {
             status = .running
             if linesFEN != fen { linesFEN = fen }
             searchStart = .now
+            beginAccounting(key: key, gen: gen)
             var acc = SnapshotAccumulator(expectedPVs: min(cfg.lines, position.legalMoves().count))
             for await event in stream {
                 if Task.isCancelled || gen != liveGeneration { return }
@@ -211,11 +308,12 @@ final class EngineController {
                     pending = Pending(fen: fen, key: key, lines: out, depth: snap.depth, nodes: snap.nodes, nps: snap.nps)
                     schedulePublish(gen: gen, cfg: cfg)
                 case .finished:
+                    settle()
                     flushPending(cfg: cfg, force: true)
                     searching = false
                 }
             }
-            if gen == liveGeneration { flushPending(cfg: cfg, force: true); searching = false }
+            if gen == liveGeneration { settle(); flushPending(cfg: cfg, force: true); searching = false }
         } catch {
             engineLog.error("live search failed: \(String(describing: error), privacy: .public)")
             if gen == liveGeneration {
@@ -234,6 +332,7 @@ final class EngineController {
     }
 
     private func finish(fen: String, engine: UCIEngine) {
+        settle()
         flushTask?.cancel(); pending = nil
         pauseReason = nil; currentKey = nil
         lines = []; linesFEN = fen; depth = 0; nps = 0; searching = false; shownKey = nil; shownNodes = 0; shownDepth = 0; shownLineCount = 0
@@ -293,6 +392,7 @@ final class EngineController {
     }
 
     func stopLive() {
+        settle()
         flushTask?.cancel(); pending = nil
         liveTask?.cancel()
         liveGeneration += 1
@@ -307,6 +407,7 @@ final class EngineController {
 
     func analyzeFixed(_ position: Position, depth target: Int) async -> FixedResult? {
         guard let engine else { return nil }
+        settle()
         liveTask?.cancel()
         liveGeneration += 1
         searching = false
@@ -336,6 +437,7 @@ final class EngineController {
     }
 
     func cancelAll() async {
+        settle()
         liveTask?.cancel()
         liveGeneration += 1
         searching = false
@@ -344,5 +446,5 @@ final class EngineController {
 
     func shutdown() async { await engine?.shutdown() }
 
-    func newGame() { cache.removeAll(); cacheOrder.removeAll(); pausedKeys.removeAll(); if let engine { Task { await engine.newGame() } } }
+    func newGame() { cache.removeAll(); cacheOrder.removeAll(); pausedKeys.removeAll(); ledger.reset(); if let engine { Task { await engine.newGame() } } }
 }

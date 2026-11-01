@@ -1,4 +1,5 @@
 import SwiftUI
+import ChessCore
 
 /// The engine form (lines, threads, memory, cool-down), shared by the engine strip popover and the Settings window.
 struct EngineSettingsForm: View {
@@ -11,6 +12,12 @@ struct EngineSettingsForm: View {
                 Stepper(value: Binding(get: { c.lines }, set: { v in settings.edit { $0.lines = v } }), in: EngineSettings.lineRange) {
                     Text("\(c.lines)").font(.mono(13)).frame(minWidth: 22, alignment: .trailing)
                 }
+            }
+            row("Analyze each position for", "Analysis stops by itself after this long and keeps its lines. Press Keep thinking to continue. It also pauses while the window is hidden or the app is in the background.") {
+                Picker("Time", selection: Binding(get: { c.budgetSeconds }, set: { v in settings.edit { $0.budgetSeconds = v } })) {
+                    ForEach(EngineConfig.budgetChoices, id: \.self) { Text(EngineConfig.budgetLabel($0)).tag($0) }
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
             }
             row("Threads", "CPU cores used for analysis. More is faster but runs hotter and drains the battery.") {
                 Stepper(value: Binding(get: { c.threads }, set: { v in settings.edit { $0.threads = v } }), in: EngineSettings.threadRange) {
