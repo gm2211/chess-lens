@@ -20,6 +20,7 @@ final class AISummary {
     @ObservationIgnored private var path: [Int] = []
     @ObservationIgnored private var line: [String] = []
     @ObservationIgnored private var firstPly = 1
+    @ObservationIgnored private(set) var lessonLine = LessonLine(start: .start, sans: [])
     @ObservationIgnored private var task: Task<Void, Never>?
     private let hub: AIHub
 
@@ -28,7 +29,7 @@ final class AISummary {
     func reset() {
         task?.cancel(); task = nil
         state = nil
-        path = []; line = []
+        path = []; line = []; lessonLine = LessonLine(start: .start, sans: [])
     }
 
     /// Shown when a review finishes with no AI provider set up.
@@ -43,10 +44,18 @@ final class AISummary {
         path = review.path
         line = input.facts.moves
         firstPly = game.nodes[review.path[1]].ply
+        lessonLine = LessonLine(start: input.facts.start, sans: line, firstPly: firstPly)
         state = .loading
         let t = Task { await run(input) }
         task = t
         return t
+    }
+
+    /// Node id of the position a story step shows: after its move, or the line's first position for "start".
+    func node(forStep step: GameLesson.StoryStep) -> Int? {
+        guard let ply = step.ply ?? lessonLine.ply(of: step.at) else { return nil }
+        let i = ply - firstPly + 1
+        return path.indices.contains(i) ? path[i] : nil
     }
 
     /// Node id of the move a reference like "23...Nf6" points to, if it is in the reviewed line.
@@ -88,12 +97,12 @@ final class AISummary {
     private func attempt(_ input: Input, compact: Bool, tool: Bool) async throws -> GroundedAnswer {
         try await AIToolLoop.run(hub: hub, system: SummaryPrompt.system(tool: tool),
                                  prompt: SummaryPrompt.user(input.facts, compact: compact),
-                                 maxTokens: 1100, allowed: input.allowed, tool: tool)
+                                 maxTokens: 1800, allowed: input.allowed, tool: tool)
     }
 
     /// Grounds every prose field (see `GameLesson.grounded`) and drops move references that aren't in the game.
     private func clean(_ g: GameLesson, allowed: Set<String>) -> (GameLesson, [String]) {
-        let r = g.grounded(allowed: allowed) { node(for: $0) != nil }
+        let r = g.grounded(allowed: allowed, line: lessonLine)
         return (r.lesson, r.unverified)
     }
 

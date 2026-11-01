@@ -174,11 +174,16 @@ private struct SummaryHero: View {
                             Text(c.explanation).font(.system(size: 13)).foregroundStyle(Theme.ink2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        if !c.examples.isEmpty {
-                            let title = c.name.prefix(1).uppercased() + c.name.dropFirst()
+                        let title = c.name.prefix(1).uppercased() + c.name.dropFirst()
+                        if !c.examples.isEmpty || !c.story.isEmpty {
                             FlowLayout(spacing: 4, lineSpacing: 3) {
-                                ForEach(Array(c.examples.enumerated()), id: \.offset) { _, e in
-                                    if let id = ai.node(for: e.move) { ExampleChip(id: id, example: e, title: title) }
+                                let steps = c.story.compactMap { st in ai.node(forStep: st).map { LessonPlayer.Step(step: st, nodeID: $0) } }
+                                if !steps.isEmpty { PlayLessonButton(title: title, steps: steps) }
+                                // In game order, whatever order the model wrote them in.
+                                let chips = c.examples.compactMap { e in ai.node(for: e.move).map { (e, $0) } }
+                                    .sorted { app.game.nodes[$0.1].ply < app.game.nodes[$1.1].ply }
+                                ForEach(Array(chips.enumerated()), id: \.offset) { _, pair in
+                                    ExampleChip(id: pair.1, example: pair.0, title: title)
                                 }
                             }
                         }
@@ -239,7 +244,7 @@ private struct ExampleChip: View {
 
     var body: some View {
         let active = app.lessonFocus == LessonFocus(nodeID: id, title: title, example: example)
-        Button { app.showExample(example, at: id, title: title) } label: {
+        Button { app.closeLesson(); app.showExample(example, at: id, title: title) } label: {
             Text(moveLabel(app.game, id)).font(.mono(12, weight: .semibold)).foregroundStyle(active ? Theme.lesson : Theme.ink)
                 .padding(.horizontal, 5).padding(.vertical, 1)
                 .background(active ? Theme.lesson.opacity(0.14) : Theme.surface, in: RoundedRectangle(cornerRadius: 3))
@@ -251,6 +256,33 @@ private struct ExampleChip: View {
     }
 }
 
+/// "Play lesson": plays the concept's story on the board, narrated (see `LessonPlayer`). "Stop" while it plays.
+private struct PlayLessonButton: View {
+    @Environment(AppModel.self) private var app
+    let title: String
+    let steps: [LessonPlayer.Step]
+
+    var body: some View {
+        let active = app.lessonPlayer?.title == title
+        Button { app.playLesson(title: title, steps: steps) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: active ? "stop.fill" : "play.fill").font(.system(size: 9, weight: .bold))
+                Text(active ? "Stop lesson" : "Play lesson").font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(active ? Theme.surface : Theme.lesson)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(active ? Theme.lesson : Theme.lesson.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.lesson.opacity(active ? 1 : 0.55), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!app.canPlayLessons)
+        .help(app.canPlayLessons ? "Walk through this idea on the board, narrated (\(steps.count) steps)"
+              : "Lessons are paused while you play the engine")
+        .accessibilityLabel(active ? "Stop the lesson on \(title)" : "Play the lesson on \(title)")
+    }
+}
+
 /// "Turning point: 23\u{2026} Nf6": goes there and illustrates it like an example chip.
 private struct TurningPointButton: View {
     @Environment(AppModel.self) private var app
@@ -259,7 +291,7 @@ private struct TurningPointButton: View {
 
     var body: some View {
         let active = app.lessonFocus == LessonFocus(nodeID: id, title: "Turning point", example: example)
-        Button { app.showExample(example, at: id, title: "Turning point") } label: {
+        Button { app.closeLesson(); app.showExample(example, at: id, title: "Turning point") } label: {
             HStack(spacing: 5) {
                 Image(systemName: "arrow.turn.down.right").font(.system(size: 11, weight: .semibold))
                 Text("Turning point: \(moveLabel(app.game, id))").font(.system(size: 12.5, weight: .semibold))
@@ -416,23 +448,93 @@ private struct EvalGraph: View {
     @Environment(AppModel.self) private var app
     @State private var hoverIndex: Int?
 
-    private struct Point: Identifiable { var id: Int; var index: Int; var node: Int; var win: Double; var cls: MoveClass? }
+    @State private var showInfo = false
+
+    private struct Point: Identifiable {
+        var id: Int; var index: Int; var node: Int; var win: Double; var cls: MoveClass?
+        var mover: Side?            // who played the move that led here (nil for the start)
+    }
 
     private var points: [Point] {
         let r = app.review
         var out: [Point] = []
         for (i, id) in r.path.enumerated() {
             guard let e = r.entries[id] else { break }
-            out.append(Point(id: id, index: i, node: id, win: e.eval.whiteWinPercent, cls: e.cls))
+            let mover = app.game.nodes[id].parent.map { app.game.nodes[$0].position.turn }
+            out.append(Point(id: id, index: i, node: id, win: e.eval.whiteWinPercent, cls: e.cls, mover: mover))
         }
         return out
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            header
+            chart
+            legend
+        }
+    }
+
+    /// "Winning chances" and the (?) explaining what the line and the dots mean.
+    private var header: some View {
+        HStack(spacing: 5) {
+            Text("WINNING CHANCES").font(.system(size: 10.5, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.ink3)
+            Button { showInfo.toggle() } label: {
+                Image(systemName: "questionmark.circle").font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("How to read this graph")
+            .accessibilityLabel("How to read this graph")
+            .popover(isPresented: $showInfo, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("The line is White\u{2019}s winning chances: up is good for White, down is good for Black.")
+                    Text("Dots mark moves that lost 5% or more against the engine\u{2019}s best move: coloured by how bad (yellow, orange, red), white or black by who played it.")
+                    Text("The line can move without a dot when the engine re-evaluates the position (it sees further), or after a small slip under 5%.")
+                }
+                .font(.system(size: 12.5)).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 280).padding(12)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// "○ Morphy  ● Duke of Brunswick… · yellow inaccuracy · orange mistake · red blunder"
+    private var legend: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 3) { Self.marker(cls: nil, side: .white); Text(Self.shortName(app.game.header("White"), "White")) }
+            HStack(spacing: 3) { Self.marker(cls: nil, side: .black); Text(Self.shortName(app.game.header("Black"), "Black")) }
+            Text("\u{00B7}").foregroundStyle(Theme.ink3)
+            ForEach([MoveClass.inaccuracy, .mistake, .blunder], id: \.self) { c in
+                HStack(spacing: 3) { Circle().fill(Theme.color(for: c)).frame(width: 6, height: 6); Text(c.name) }
+            }
+        }
+        .font(.system(size: 10.5)).foregroundStyle(Theme.ink3).lineLimit(1).minimumScaleFactor(0.8)
+    }
+
+    /// A move marker: filled White or Black, ringed in the severity colour (grey without a class).
+    static func marker(cls: MoveClass?, side: Side) -> some View {
+        let d: CGFloat = cls == .blunder ? 10 : 8.5
+        return Circle()
+            .fill(side == .white ? Color(red: 0.97, green: 0.97, blue: 0.95) : Color(red: 0.10, green: 0.12, blue: 0.12))
+            .overlay(Circle().strokeBorder(cls.map(Theme.color(for:)) ?? Theme.ink3, lineWidth: cls == nil ? 1 : 2.4))
+            .frame(width: d, height: d)
+    }
+
+    /// A player's name short enough for the legend: "Morphy" for "Paul Morphy", "Carlsen" for "Carlsen, Magnus".
+    static func shortName(_ header: String?, _ side: String) -> String {
+        guard let n = PGN.meaningful(header) else { return side }
+        if let comma = n.firstIndex(of: ",") { return String(n[..<comma]) }
+        let words = n.split(separator: " ")
+        if words.count <= 3, let last = words.last { return String(last) }
+        return n.count > 18 ? String(n.prefix(17)).trimmingCharacters(in: .whitespaces) + "\u{2026}" : n
+    }
+
+    private var chart: some View {
         let pts = points
         let path = app.review.path
         let curIndex = path.firstIndex(of: app.currentID)
-        Chart {
+        return Chart {
             ForEach(pts) { p in
                 AreaMark(x: .value("Ply", p.index), yStart: .value("Floor", 0), yEnd: .value("White", p.win))
                     .foregroundStyle(Theme.barW)
@@ -445,9 +547,9 @@ private struct EvalGraph: View {
             }
             RuleMark(y: .value("Even", 50)).foregroundStyle(Theme.barLine).lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
             ForEach(pts.filter { $0.cls != nil }) { p in
+                // Filled by the side that moved, ringed by severity: who erred is visible at a glance.
                 PointMark(x: .value("Ply", p.index), y: .value("White", p.win))
-                    .foregroundStyle(Theme.color(for: p.cls!))
-                    .symbolSize(p.cls == .blunder ? 46 : 32)
+                    .symbol { Self.marker(cls: p.cls!, side: p.mover ?? .white) }
             }
             if let c = curIndex {
                 RuleMark(x: .value("Current", c)).foregroundStyle(Color("hlSel")).lineStyle(StrokeStyle(lineWidth: 2))
@@ -474,7 +576,9 @@ private struct EvalGraph: View {
                     })
                 if let h = hoverIndex, let p = pts.first(where: { $0.index == h }), let x = proxy.position(forX: h) {
                     let origin = geo[proxy.plotFrame!].origin
-                    tooltip(p).position(x: min(max(origin.x + x, 70), geo.size.width - 70), y: 16)
+                    let half = min(118, geo.size.width / 2)
+                    tooltip(p).frame(maxWidth: half * 2)
+                        .position(x: min(max(origin.x + x, half), geo.size.width - half), y: 24)
                 }
             }
         }
@@ -482,6 +586,37 @@ private struct EvalGraph: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.line2, lineWidth: 1))
         .accessibilityLabel("Evaluation graph. Click to jump to a move.")
+    }
+
+    /// The mover's win-chance cost against the engine's best move, in words: why a bump has (or hasn't) a dot.
+    static func verdict(_ review: ReviewModel, game: Game, node: Int) -> String? {
+        let n = game.nodes[node]
+        guard let pid = n.parent, let move = n.move, let e = review.entries[node], let prev = review.entries[pid]
+        else { return nil }
+        let mover = game.nodes[pid].position.turn
+        let swing = (e.eval.whiteWinPercent - prev.eval.whiteWinPercent) * (mover == .white ? 1 : -1)
+        let loss = e.loss ?? 0
+        func pct(_ v: Double) -> String { "\u{2212}\(Int(v.rounded()))%" }
+        let side = mover == .white ? "White" : "Black"
+        let who = PGN.meaningful(game.header(side)).map { "\(side) (\(shortName($0, side)))" } ?? side
+        return "\(who) \u{00B7} " + verdictTail(e: e, prev: prev, move: move, swing: swing, loss: loss, pct: pct)
+    }
+
+    private static func verdictTail(e: ReviewEntry, prev: ReviewEntry, move: Move, swing: Double, loss: Double,
+                                    pct: (Double) -> String) -> String {
+        switch e.cls {
+        case .brilliant?: return "brilliant move"
+        case .great?: return "great move"
+        case let c? where c.isError: return "\(pct(loss)) \u{00B7} \(c.name)"
+        default: break
+        }
+        if prev.best == move.uci {
+            return abs(swing) >= 3
+                ? "+0% \u{00B7} best move; the score moved because the engine saw further"
+                : "best move"
+        }
+        if loss.rounded() >= 1 { return "\(pct(loss)) \u{00B7} small slip, under the 5% inaccuracy line" }
+        return "\u{2212}0% \u{00B7} as good as the engine's choice"
     }
 
     private func index(at loc: CGPoint, proxy: ChartProxy, geo: GeometryProxy) -> Int? {
@@ -496,12 +631,20 @@ private struct EvalGraph: View {
         let parent = n.parent.map { app.game.nodes[$0] }
         let label = n.move == nil ? "Start" : "\(parent?.position.fullmove ?? 0)\(parent?.position.turn == .white ? "." : "\u{2026}") \(n.san)"
         let eval = app.review.entries[p.node]?.eval.display ?? ""
-        return HStack(spacing: 5) {
-            Text(label)
-            if let c = p.cls { ClassBadge(cls: c, size: 13) }
-            Text(eval).foregroundStyle(Theme.ink2)
+        let verdict = Self.verdict(app.review, game: app.game, node: p.node)
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 5) {
+                Text(label)
+                if let c = p.cls { ClassBadge(cls: c, size: 13) }
+                Text(eval).foregroundStyle(Theme.ink2)
+            }
+            .font(.mono(12))
+            if let verdict {
+                Text(verdict).font(.system(size: 11)).foregroundStyle(Theme.ink2)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }
         }
-            .font(.mono(12)).foregroundStyle(Theme.ink)
+            .foregroundStyle(Theme.ink)
             .padding(.horizontal, 7).padding(.vertical, 4)
             .background(Theme.surface, in: RoundedRectangle(cornerRadius: 3))
             .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.line2, lineWidth: 1))

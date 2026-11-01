@@ -68,8 +68,17 @@ struct BoardView: View {
         return f
     }
 
+    /// The lesson step being played, if any: it owns the board (its arrows and circles only, no engine arrows).
+    private var lessonStep: GameLesson.StoryStep? {
+        guard !app.hidesEvaluation, let p = app.lessonPlayer else { return nil }
+        return p.current.step
+    }
+
     private var arrows: [BoardArrow] {
         if app.hidesEvaluation { return [] }
+        if let st = lessonStep {
+            return st.arrows.map { BoardArrow(from: $0.from, to: $0.to, rank: 1, kind: .lesson) }
+        }
         // An illustrated example owns the board: only its arrows, so the point isn't lost among engine lines.
         if let f = lessonFocus, !f.arrows.isEmpty || !f.squares.isEmpty {
             return f.arrows.map { BoardArrow(from: $0.from, to: $0.to, rank: 1, kind: .lesson) }
@@ -96,6 +105,8 @@ struct BoardView: View {
             pieceLayer(g)
                 .id(app.epoch)
 
+            circleLayer(g)
+
             Canvas { ctx, _ in drawArrows(&ctx, g) }
                 .frame(width: side, height: side)
                 .allowsHitTesting(false)
@@ -111,14 +122,14 @@ struct BoardView: View {
         .onChange(of: app.epoch) { _, _ in selected = nil; dragFrom = nil; promotion = nil }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Chess board")
-        .accessibilityValue(app.position.fen)
+        .accessibilityValue(app.boardPosition.fen)
     }
 
     // MARK: Layers
 
     private func pieceLayer(_ g: BoardGeometry) -> some View {
         ZStack(alignment: .topLeading) {
-            ForEach(app.pieces(for: app.currentID)) { inst in
+            ForEach(app.boardPieces()) { inst in
                 let dragging = dragFrom == inst.square && gestureActive && dragFrom != nil
                 let c = dragging ? dragPoint : g.center(inst.square)
                 Image(inst.piece.assetName)
@@ -130,11 +141,31 @@ struct BoardView: View {
                     .position(c)
                     .zIndex(dragging ? 10 : 1)
                     .transition(.opacity)
-                    .animation(dragging ? nil : .smooth(duration: 0.22), value: inst.square)
+                    .animation(dragging ? nil : .smooth(duration: previewing ? LessonPlayer.lineMoveAnimation : 0.22), value: inst.square)
             }
         }
         .animation(.easeOut(duration: 0.16), value: app.currentID)
         .frame(width: side, height: side, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+
+    /// A lesson line is being acted out on top of the game position.
+    private var previewing: Bool { app.lessonPreview != nil }
+
+    /// Rings around the squares the lesson step talks about, popping in when the step starts.
+    private func circleLayer(_ g: BoardGeometry) -> some View {
+        let squares = lessonStep?.circles ?? []
+        let epoch = app.lessonPlayer?.stepEpoch ?? 0
+        return ZStack(alignment: .topLeading) {
+            ForEach(squares, id: \.self) { sq in
+                LessonRing(cell: g.cell)
+                    .position(g.center(sq))
+                    .transition(.scale(scale: 1.7).combined(with: .opacity))
+            }
+            .id(epoch)
+        }
+        .frame(width: side, height: side, alignment: .topLeading)
+        .animation(.spring(response: 0.42, dampingFraction: 0.62), value: epoch)
         .allowsHitTesting(false)
     }
 
@@ -145,7 +176,7 @@ struct BoardView: View {
             ctx.fill(Path(r), with: .color(Sq.isLight(sq) ? Theme.sqL : Theme.sqD))
         }
         // Last move
-        if let m = app.lastMove {
+        if let m = app.boardLastMove {
             ctx.fill(Path(g.rect(m.from)), with: .color(Theme.hlLast))
             ctx.fill(Path(g.rect(m.to)), with: .color(Theme.hlLast))
         }
@@ -157,7 +188,8 @@ struct BoardView: View {
         }
         if let s = selected { ctx.fill(Path(g.rect(s)), with: .color(Theme.hlSel)) }
         // Check
-        if app.position.isCheck, let k = app.position.kingSquare(app.position.turn) {
+        let shown = app.boardPosition
+        if shown.isCheck, let k = shown.kingSquare(shown.turn) {
             let r = g.rect(k)
             let grad = Gradient(stops: [.init(color: Theme.check, location: 0), .init(color: Theme.check, location: 0.28), .init(color: Theme.check.opacity(0), location: 0.72)])
             ctx.fill(Path(r), with: .radialGradient(grad, center: CGPoint(x: r.midX, y: r.midY), startRadius: 0, endRadius: cell * 0.72))
@@ -230,6 +262,8 @@ struct BoardView: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { v in
                 if !gestureActive {
+                    // Touching the board during a lesson ends it, so the move is made on the real position.
+                    if app.lessonPlayer != nil { app.closeLesson() }
                     gestureActive = true
                     let down = g.square(at: v.startLocation)
                     wasSelectedAtStart = (selected == down)
@@ -304,6 +338,18 @@ struct BoardView: View {
             .offset(x: r.minX, y: fromTop ? 0 : g.side - g.cell * 4)
         }
         .frame(width: g.side, height: g.side)
+    }
+}
+
+/// A lesson circle: a soft ring in the lesson colour around a square (a piece or an empty square).
+struct LessonRing: View {
+    let cell: CGFloat
+    var body: some View {
+        Circle()
+            .strokeBorder(Theme.lesson.opacity(0.92), lineWidth: cell * 0.075)
+            .background(Circle().fill(Theme.lesson.opacity(0.12)))
+            .shadow(color: Theme.lesson.opacity(0.45), radius: cell * 0.08)
+            .frame(width: cell * 0.94, height: cell * 0.94)
     }
 }
 

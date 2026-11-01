@@ -26,6 +26,7 @@ extension AppModel {
     }
 
     func beginPlay(_ setup: PlaySetup) {
+        closeLesson()
         endPlay()
         setup.save()
         flipped = setup.userSide == .black

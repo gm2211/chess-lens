@@ -71,7 +71,7 @@ public enum SummaryPrompt {
         Reply with only a JSON object:
         {"headline": "1 sentence: the result and the story of the game",
         "story": "2-3 sentences: how the opening went, where the game turned, how it was won or lost",
-        "concepts": [{"name": "2-5 words, e.g. king safety, loose pieces, trading when ahead", "explanation": "1-2 sentences: what it means and how it showed up here", "examples": [\(example("a game move that clearly shows the concept, like 11. Bxb5+ or 23...Nf6"))]}],
+        "concepts": [{"name": "2-5 words, e.g. king safety, loose pieces, trading when ahead", "explanation": "1-2 sentences: what it means and how it showed up here", "examples": [\(example("a game move that clearly shows the concept, like 11. Bxb5+ or 23...Nf6"))], "story": [\(storyStep)]}],
         "white": "1 sentence on White's play, naming the strongest and weakest phase",
         "black": "1 sentence on Black's play, the same way",
         "turningPoint": \(example("the move where the game turned, like 23...Nf6")),
@@ -84,8 +84,15 @@ public enum SummaryPrompt {
         that piece's second move, not another piece's developing move). Write the why as teaching about this move, \
         e.g. "Black's 6th move and still only one minor piece out; White already has four." Arrows (from and to \
         square, like "b5e8") and squares point at what the why describes on the board after the move: the pinned \
-        piece, the loose piece, the open file, the exposed king. Leave them out when nothing helps. \
-        Keep the whole answer under 350 words.
+        piece, the loose piece, the open file, the exposed king. Leave them out when nothing helps.
+        Each concept's story is a short narrated walkthrough the app plays on the board like a video lesson, 3-7 steps \
+        in game order: the setup (how the problem started), the key moment or moments, the consequence, then the rule \
+        to remember. Each step shows the position after its "at" move ("start" for before move 1) while "say" is read \
+        aloud, so write "say" as speech: one or two short, warm sentences, no notation beyond the move being shown. \
+        Use "circles" for the pieces or squares "say" talks about, "arrows" for attacks, pins and plans, and "line" \
+        (legal UCI moves from that position, at most 6) to act out what should have happened or what the threat was; \
+        the board animates those moves and then returns to the game. Every step should point at something.
+        Keep the whole answer under 650 words.
         """ + (tool ? "\n" + EngineTool.instructions : "")
     }
 
@@ -93,6 +100,9 @@ public enum SummaryPrompt {
     static func example(_ move: String) -> String {
         #"{"move": ""# + move + #"", "why": "1 short sentence tying THIS move to the concept, readable while looking at the board after it", "arrows": ["optional, at most 3, from+to squares like b5e8"], "squares": ["optional, at most 4 squares to highlight, like e8"]}"#
     }
+
+    /// The JSON shape of one story step.
+    static let storyStep = #"{"at": "the game move whose position is shown, like 6...Nf6, or start", "say": "1-2 short spoken sentences about this position", "circles": ["optional, at most 4 squares to circle, like f6"], "arrows": ["optional, at most 3, like b5e8"], "line": ["optional, at most 6 legal UCI moves to animate from this position, like e1c1"], "pause": "optional seconds to hold, like 1"}"#
 
     /// - Parameter compact: a shorter prompt for models with a small context (fewer moments, one eval per move, no FENs).
     public static func user(_ f: SummaryFacts, compact: Bool = false) -> String {
