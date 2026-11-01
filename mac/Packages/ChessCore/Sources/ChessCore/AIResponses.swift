@@ -249,6 +249,12 @@ public struct GameLesson: Equatable, Sendable {
             if g.story.isEmpty { g.story = g.synthesizedStory(plies: line.ply(of:)) }
             return g
         }
+        // Cards follow the game: by the earliest ply of any example or story step (concepts with none go last).
+        func first(_ c: Concept) -> Int {
+            let plies = c.examples.compactMap { line.ply(of: $0.move) } + c.story.compactMap(\.ply)
+            return plies.min() ?? Int.max
+        }
+        out.concepts = out.concepts.enumerated().sorted { (first($0.element), $0.offset) < (first($1.element), $1.offset) }.map(\.element)
         out.lessons = lessons.compactMap { c($0) }
         out.exercises = exercises.map {
             Exercise(title: c($0.title) ?? $0.title, fromMove: $0.fromMove.flatMap { line.ply(of: $0) != nil ? $0 : nil },

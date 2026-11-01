@@ -11,6 +11,8 @@ final class LessonPlayer {
     struct Step: Equatable {
         var step: GameLesson.StoryStep
         var nodeID: Int
+        /// The concept this step belongs to, when the player runs a mixed playlist (the full review).
+        var concept: String?
     }
 
     /// What the board shows instead of the current node while a step's line is being acted out.
@@ -26,6 +28,8 @@ final class LessonPlayer {
 
     let title: String
     let steps: [Step]
+    /// A playlist across all concepts ("Full review"): the bar shows each step's concept.
+    let isFullReview: Bool
     private(set) var index = 0
     private(set) var isPlaying = false
     /// How many moves of the current step's line are on the board (0 = the game position itself).
@@ -44,12 +48,15 @@ final class LessonPlayer {
 
     @ObservationIgnored private weak var app: AppModel?
     @ObservationIgnored private var task: Task<Void, Never>?
+    /// Replays the game moves between two steps, one slide at a time (see `show`).
+    @ObservationIgnored private var travelTask: Task<Void, Never>?
+    static let secondsPerHop = 0.35
     @ObservationIgnored private let narrator = Narrator()
     /// The node the player put on the board; any other navigation closes the player (see `AppModel.currentID`).
     @ObservationIgnored private(set) var nodeID: Int
 
-    init(title: String, steps: [Step], app: AppModel) {
-        self.title = title; self.steps = steps; self.app = app
+    init(title: String, steps: [Step], app: AppModel, isFullReview: Bool = false) {
+        self.title = title; self.steps = steps; self.app = app; self.isFullReview = isFullReview
         nodeID = steps.first?.nodeID ?? 0
     }
 
@@ -113,6 +120,7 @@ final class LessonPlayer {
     /// Stops narration and timers. The board falls back to the current node by itself once the player is gone.
     func stop() {
         isPlaying = false
+        travelTask?.cancel(); travelTask = nil
         task?.cancel(); task = nil
         narrator.stop()
     }
@@ -127,8 +135,28 @@ final class LessonPlayer {
         finished = false
         linePly = 0
         stepEpoch += 1
-        nodeID = steps[i].nodeID
-        app?.goto(steps[i].nodeID)
+        travel(to: steps[i].nodeID)
+    }
+
+    /// Goes to `target`, replaying the game moves in between one by one so the pieces slide (a long way: jumps
+    /// most of it, animating the last few). Unrelated positions just change.
+    private func travel(to target: Int) {
+        travelTask?.cancel(); travelTask = nil
+        guard let app else { nodeID = target; return }
+        let hops = PieceMotion.hops(from: app.currentID, to: target) { app.game.nodes[$0].parent }
+        guard let first = hops.first else { nodeID = target; return }
+        nodeID = first
+        app.goto(first)
+        guard hops.count > 1 else { return }
+        let rest = Array(hops.dropFirst())
+        travelTask = Task { [weak self] in
+            for n in rest {
+                try? await Task.sleep(for: .seconds(Self.secondsPerHop))
+                guard !Task.isCancelled, let self, let app = self.app else { return }
+                self.nodeID = n
+                app.goto(n)
+            }
+        }
     }
 
     /// Sets how many line moves are shown (for previews and tests).
@@ -142,6 +170,8 @@ final class LessonPlayer {
         let narrate = narrate
         task = Task { [weak self] in
             guard let self else { return }
+            await self.travelTask?.value
+            guard !Task.isCancelled else { return }
             async let spoken: Void = self.narration(step.say, narrate: narrate)
             await self.actOutLine(step.line.count)
             await spoken

@@ -111,6 +111,8 @@ struct BoardView: View {
             pieceLayer(g)
                 .id(app.epoch)
 
+            stateBadgeLayer(g)
+
             circleLayer(g)
 
             Canvas { ctx, _ in let plan = arrowPlan; ArrowPainter.draw(&ctx, arrows: plan.arrows, dots: plan.dots, geo: g) }
@@ -138,21 +140,69 @@ struct BoardView: View {
             ForEach(app.boardPieces()) { inst in
                 let dragging = dragFrom == inst.square && gestureActive && dragFrom != nil
                 let c = dragging ? dragPoint : g.center(inst.square)
-                Image(inst.piece.assetName)
-                    .resizable()
-                    .interpolation(.high)
+                ZStack {
+                    // A promotion cross-fades the pawn into its new piece.
+                    Image(inst.piece.assetName)
+                        .resizable()
+                        .interpolation(.high)
+                        .id(inst.piece.assetName)
+                        .transition(.opacity)
+                }
                     .frame(width: g.cell, height: g.cell)
+                    .animation(.easeInOut(duration: 0.25), value: inst.piece.assetName)
                     .scaleEffect(dragging ? 1.12 : 1)
                     .shadow(color: .black.opacity(dragging ? 0.35 : 0), radius: 6, y: 4)
                     .position(c)
                     .zIndex(dragging ? 10 : 1)
                     .transition(.opacity)
-                    .animation(dragging ? nil : .smooth(duration: previewing ? LessonPlayer.lineMoveAnimation : 0.22), value: inst.square)
+                    .animation(dragging ? nil : .easeInOut(duration: previewing ? LessonPlayer.lineMoveAnimation : 0.3), value: inst.square)
             }
         }
-        .animation(.easeOut(duration: 0.16), value: app.currentID)
+        // Captured pieces fade out (and come back in when stepping backwards or when a line preview ends).
+        .animation(.easeOut(duration: 0.2), value: app.currentID)
+        .animation(.easeOut(duration: 0.2), value: app.lessonPlayer?.linePly)
         .frame(width: side, height: side, alignment: .topLeading)
         .allowsHitTesting(false)
+    }
+
+    /// How the game ended at the position on the board (nil while it goes on). A lesson line being acted out
+    /// is judged on its own position only (no repetition history).
+    private var gameEnd: GameEnd? {
+        if let p = app.lessonPreview { return p.position.gameEnd }
+        return app.game.gameEnd(at: app.currentID)
+    }
+
+    /// Game state drawn on the kings: a "#" on a mated king with a crown on the winner's, a "\u{00BD}" on both
+    /// kings of a drawn game (the tooltip says why).
+    private func stateBadgeLayer(_ g: BoardGeometry) -> some View {
+        let pos = app.boardPosition
+        let d = max(15, g.cell * 0.31)
+        return ZStack(alignment: .topLeading) {
+            if let end = gameEnd {
+                ForEach([Side.white, Side.black], id: \.self) { side in
+                    if let k = pos.kingSquare(side), let badge = stateBadge(end, side) {
+                        let r = g.rect(k)
+                        StateBadgeView(badge: badge, diameter: d)
+                            .position(x: r.maxX - d * 0.5 - g.cell * 0.02, y: r.minY + d * 0.5 + g.cell * 0.02)
+                            .transition(.scale(scale: 0.5).combined(with: .opacity))
+                    }
+                }
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: gameEnd)
+        .frame(width: side, height: side, alignment: .topLeading)
+    }
+
+    private func stateBadge(_ end: GameEnd, _ side: Side) -> StateBadge? {
+        let name = side == .white ? "White" : "Black"
+        switch end {
+        case .checkmate(let winner):
+            return side == winner
+                ? StateBadge(kind: .winner, label: "\(name) wins", help: "Checkmate: \(name) wins")
+                : StateBadge(kind: .mated, label: "\(name) king is checkmated", help: "Checkmate: \(name) is mated")
+        default:
+            return StateBadge(kind: .draw, label: "\(name) king: \(end.title.lowercased())", help: end == .stalemate ? "Stalemate: a draw" : end.title)
+        }
     }
 
     /// A lesson line is being acted out on top of the game position.
@@ -197,8 +247,11 @@ struct BoardView: View {
         let shown = app.boardPosition
         if shown.isCheck, let k = shown.kingSquare(shown.turn) {
             let r = g.rect(k)
-            let grad = Gradient(stops: [.init(color: Theme.check, location: 0), .init(color: Theme.check, location: 0.28), .init(color: Theme.check.opacity(0), location: 0.72)])
-            ctx.fill(Path(r), with: .radialGradient(grad, center: CGPoint(x: r.midX, y: r.midY), startRadius: 0, endRadius: cell * 0.72))
+            let grad = Gradient(stops: [.init(color: Theme.check, location: 0), .init(color: Theme.check, location: 0.4), .init(color: Theme.check.opacity(0), location: 0.85)])
+            ctx.fill(Path(r), with: .radialGradient(grad, center: CGPoint(x: r.midX, y: r.midY), startRadius: 0, endRadius: cell * 0.8))
+            if gameEnd?.winner != nil {
+                ctx.stroke(Path(r.insetBy(dx: cell * 0.035, dy: cell * 0.035)), with: .color(Theme.blund.opacity(0.9)), lineWidth: cell * 0.06)
+            }
         }
         // Coordinates
         let fontSize = max(9, cell * 0.17)
@@ -337,5 +390,51 @@ private struct PromotionButtonStyle: ButtonStyle {
         configuration.label
             .background(configuration.isPressed ? Theme.accentSoft : Color.clear)
             .contentShape(Rectangle())
+    }
+}
+
+
+/// A small round marker on a king for the state of the game.
+struct StateBadge: Equatable {
+    enum Kind { case mated, winner, draw }
+    var kind: Kind
+    var label: String
+    var help: String
+}
+
+struct StateBadgeView: View {
+    let badge: StateBadge
+    let diameter: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle().fill(fill)
+            Circle().strokeBorder(Color.white.opacity(0.9), lineWidth: max(1, diameter * 0.08))
+            content
+        }
+        .frame(width: diameter, height: diameter)
+        .shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
+        .help(badge.help)
+        .accessibilityElement()
+        .accessibilityLabel(badge.label)
+    }
+
+    private var fill: Color {
+        switch badge.kind {
+        case .mated: Theme.blund
+        case .winner: Theme.good
+        case .draw: Color(white: 0.42)
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch badge.kind {
+        case .mated:
+            Text("#").font(.system(size: diameter * 0.66, weight: .heavy, design: .rounded)).foregroundStyle(.white)
+        case .winner:
+            Image(systemName: "crown.fill").font(.system(size: diameter * 0.5, weight: .bold)).foregroundStyle(.white)
+        case .draw:
+            Text("\u{00BD}").font(.system(size: diameter * 0.62, weight: .heavy, design: .rounded)).foregroundStyle(.white)
+        }
     }
 }
