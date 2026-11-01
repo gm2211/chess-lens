@@ -175,11 +175,15 @@ public struct GameLesson: Equatable, Sendable {
     public var turningPoint: Example?
     public var lessons: [String] = []
     public var exercises: [Exercise] = []
+    /// The game's story as 4-6 ordered beats (see `Beat`); empty for lessons written before beats existed.
+    public var beats: [Beat] = []
 
     public init(headline: String? = nil, story: String? = nil, concepts: [Concept] = [], white: String? = nil,
-                black: String? = nil, turningPoint: Example? = nil, lessons: [String] = [], exercises: [Exercise] = []) {
+                black: String? = nil, turningPoint: Example? = nil, lessons: [String] = [], exercises: [Exercise] = [],
+                beats: [Beat] = []) {
         self.headline = headline; self.story = story; self.concepts = concepts; self.white = white
         self.black = black; self.turningPoint = turningPoint; self.lessons = lessons; self.exercises = exercises
+        self.beats = beats
     }
 
     /// Parses the model's JSON; anything else becomes the story so the user still sees the text.
@@ -213,6 +217,7 @@ public struct GameLesson: Equatable, Sendable {
                                         fromMove: AIJSON.string(AIJSON.value(d, "fromMove")),
                                         task: task, concept: AIJSON.string(AIJSON.value(d, "concept"))))
         }
+        g.beats = (AIJSON.value(o, "beats") as? [Any] ?? []).prefix(10).compactMap(Beat.parse)
         if g == GameLesson() { return GameLesson(story: stripFences(t)) }
         return g
     }
@@ -260,6 +265,7 @@ public struct GameLesson: Equatable, Sendable {
             Exercise(title: c($0.title) ?? $0.title, fromMove: $0.fromMove.flatMap { line.ply(of: $0) != nil ? $0 : nil },
                      task: c($0.task) ?? $0.task, concept: $0.concept)
         }
+        out.beats = Self.groundedBeats(beats, allowed: allowed, line: line)
         return (out, unverified)
     }
 

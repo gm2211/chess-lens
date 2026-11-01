@@ -122,7 +122,7 @@ final class AISummary {
     private func attempt(_ input: Input, compact: Bool, tool: Bool) async throws -> GroundedAnswer {
         try await AIToolLoop.run(hub: hub, system: SummaryPrompt.system(tool: tool),
                                  prompt: SummaryPrompt.user(input.facts, compact: compact),
-                                 maxTokens: 1800, allowed: input.allowed, tool: tool, timeout: .lesson)
+                                 maxTokens: 2600, allowed: input.allowed, tool: tool, timeout: .lesson)
     }
 
     /// Grounds every prose field (see `GameLesson.grounded`) and drops move references that aren't in the game.
