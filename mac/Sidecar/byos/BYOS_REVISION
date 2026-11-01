@@ -1,6 +1,6 @@
-commit=dbb68148492772ccc8c124bc6664726a6bf4eab6
+commit=1f3dd06d84c84becc3bee8f9b857ab9442d974ef
 sourcePath=packages
 mode=packages
-packages=chatgpt-local,claude-local,core,providers
+packages=chatgpt-local,claude-local,core,grok-local,providers
 namePrefix=byos-
 engine=omit

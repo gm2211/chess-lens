@@ -73,7 +73,7 @@ Settings > AI (`ChessLens/LLM/AIProvidersView.swift`, about 340 pt wide) picks t
 | Claude | OAuth (Claude Pro/Max subscription), loopback + paste-code fallback | Claude subscription sign-in is supported, via `@byos/claude-local` |
 | Claude API | pasted key | `claude()` from `@byos/providers` |
 | OpenRouter, Groq, Hugging Face | pasted key | `@byos/providers` adapters |
-| Grok | SuperGrok device-code sign-in or pasted key | device flow ported from Skim |
+| Grok | SuperGrok device-code sign-in or pasted key | `@byos/grok-local` (tokens + refresh in its own Keychain item); keys stay in the sidecar vault |
 | Apple Intelligence | none | on-device FoundationModels, macOS 26+, no sidecar; shows why when unavailable |
 
 Model lists come live from each provider. Keys and tokens live only in the Keychain and only the sidecar touches them.

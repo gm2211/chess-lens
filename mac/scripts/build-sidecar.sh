@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds the LLM sidecar into mac/vendor/sidecar (gitignored), mirroring build-stockfish.sh:
 #   node           official Node.js binary (pinned version, sha256 + Developer ID team checked)
-#   sidecar.mjs    esbuild bundle of mac/Sidecar/src + the vendored @byos/chatgpt-local + jose
+#   sidecar.mjs    esbuild bundle of mac/Sidecar/src + the vendored @byos/chatgpt-local, grok-local + jose
 #   keyring.darwin-arm64.node   native Keychain addon
 # npm runs inside safe-run (lifecycle scripts off); only the Node download uses the network outside npm.
 set -euo pipefail

@@ -1,4 +1,4 @@
-// Bundles src/main.mjs + the vendored @byos packages (chatgpt-local, claude-local, providers; TypeScript source) + jose into out/sidecar.mjs
+// Bundles src/main.mjs + the vendored @byos packages (chatgpt-local, claude-local, grok-local, providers; TypeScript source) + jose into out/sidecar.mjs
 // and copies the @napi-rs/keyring native addon next to it. Run through mac/scripts/build-sidecar.sh.
 import { build } from 'esbuild';
 import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
@@ -15,6 +15,7 @@ await build({
   alias: {
     '@byos/chatgpt-local': here('byos/byos-chatgpt-local/src/index.ts'),
     '@byos/claude-local': here('byos/byos-claude-local/src/index.ts'),
+    '@byos/grok-local': here('byos/byos-grok-local/src/index.ts'),
     '@byos/providers': here('byos/byos-providers/src/index.ts'),
     '@byos/core': here('byos/byos-core/src/index.ts'),
   },
