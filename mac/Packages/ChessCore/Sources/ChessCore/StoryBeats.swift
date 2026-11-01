@@ -46,9 +46,12 @@ extension GameLesson {
         public var circles: [Square]
         /// Ply of the position after `at` (0 = before White's first move). Set by grounding; nil until then.
         public var ply: Int?
+        /// The AI's scene for the beat (see `SceneStep`); empty when it wrote none, and the app writes one.
+        public var script: [SceneStep]
 
         public init(kind: Kind, at: String, title: String? = nil, headline: String, explain: String? = nil,
-                    rule: String? = nil, arrows: [Example.Arrow] = [], circles: [Square] = [], ply: Int? = nil) {
+                    rule: String? = nil, arrows: [Example.Arrow] = [], circles: [Square] = [], ply: Int? = nil,
+                    script: [SceneStep] = []) {
             self.kind = kind; self.at = at
             let t = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             self.title = t.isEmpty ? kind.defaultTitle : t
@@ -56,7 +59,11 @@ extension GameLesson {
             self.arrows = Self.unique(arrows, max: Self.maxArrows)
             self.circles = Self.unique(circles, max: Self.maxCircles)
             self.ply = ply
+            self.script = Array(script.prefix(SceneStep.maxSteps))
         }
+
+        /// Whether the scene starts on the position before `at` (the question at an error) rather than after it.
+        public var asksAtError: Bool { kind == .slip || kind == .turning }
 
         /// What the narrator reads: headline, explanation, rule.
         public var narration: String {
@@ -75,7 +82,9 @@ extension GameLesson {
             return Beat(kind: Kind.parse(AIJSON.string(AIJSON.value(d, "kind") ?? AIJSON.value(d, "type"))), at: at,
                         title: AIJSON.string(AIJSON.value(d, "title")), headline: headline ?? "",
                         explain: explain, rule: AIJSON.string(AIJSON.value(d, "rule")),
-                        arrows: Example.parseArrows(AIJSON.value(d, "arrows")), circles: circles)
+                        arrows: Example.parseArrows(AIJSON.value(d, "arrows")), circles: circles,
+                        script: (AIJSON.value(d, "script") as? [Any] ?? AIJSON.value(d, "scene") as? [Any] ?? [])
+                            .prefix(SceneStep.maxSteps * 2).compactMap(SceneStep.parse))
         }
 
         private static func unique<T: Equatable>(_ xs: [T], max: Int) -> [T] {
@@ -87,7 +96,8 @@ extension GameLesson {
 
     /// Beats whose `at` is in the line, in game order (ties keep the model's order; one beat per position), at most
     /// `Beat.maxBeats`. Prose loses sentences citing moves not in `allowed`; a beat left with nothing to say is
-    /// dropped, and a missing headline is taken from the explanation's first sentence.
+    /// dropped, and a missing headline is taken from the explanation's first sentence. A script is replayed from the
+    /// position before `at` for slip and turning beats, after it otherwise (see `BeatScene.grounded`).
     public static func groundedBeats(_ beats: [Beat], allowed: Set<String>, line: LessonLine) -> [Beat] {
         func prune(_ s: String?) -> String? {
             guard let s else { return nil }
@@ -105,10 +115,12 @@ extension GameLesson {
                 headline = parts.first
                 explain = parts.count > 1 ? parts.dropFirst().joined(separator: " ") : nil
             }
-            guard let headline else { continue }
+            guard let headline, let game = line.position(atPly: ply) else { continue }
             plies.insert(ply)
+            let root = b.asksAtError ? line.position(atPly: ply - 1) ?? game : game
+            let script = BeatScene.grounded(b.script, allowed: allowed, root: root, game: game)
             kept.append((Beat(kind: b.kind, at: b.at, title: prune(b.title), headline: headline, explain: explain,
-                              rule: prune(b.rule), arrows: b.arrows, circles: b.circles, ply: ply), ply, i))
+                              rule: prune(b.rule), arrows: b.arrows, circles: b.circles, ply: ply, script: script), ply, i))
         }
         return kept.sorted { ($0.1, $0.2) < ($1.1, $1.2) }.prefix(Beat.maxBeats).map(\.0)
     }
@@ -157,7 +169,9 @@ public enum StoryBeats {
             let reply = m.reply.flatMap { u in after.flatMap { moveLabel(u, from: $0) } }
             var explain: [String] = []
             if let best { explain.append("Stronger was \(best).") }
-            if let reply { explain.append("It allows \(reply).") }
+            if let reply, let after, let r = m.reply.flatMap(after.move(fromUCI:)) {
+                explain.append("After \(display(ref)), \(reply) \(SceneWriter.threatClause(r, from: after)).")
+            }
             let arrow = m.reply.flatMap { u in after?.move(fromUCI: u) }.map { GameLesson.Example.Arrow(from: $0.from, to: $0.to) }
             add(Beat(kind: turning ? .turning : .slip, at: ref,
                      headline: "\(name(m.side))'s \(display(ref)) is \(article(m.classification)) \(m.classification).",

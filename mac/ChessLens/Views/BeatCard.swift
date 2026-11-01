@@ -15,9 +15,10 @@ extension GameLesson.Beat.Kind {
     }
 }
 
-/// The guided review under the board, in the caption's place: "Beat 2 of 5 \u{00B7} The slip", the headline, then
-/// the find-the-better-move question or the explanation and rule, and the transport (previous, play, next, read
-/// aloud, close). See `BeatWalkthrough`.
+/// The guided review under the board, in the caption's place: "Beat 2 of 5 \u{00B7} The slip", the beat's headline,
+/// then the scene's current line as a subtitle with its progress, the find-the-better-move question when the scene
+/// stops to ask, the rule once the scene is over, and the transport (previous, play, next, replay, voice, close).
+/// See `BeatWalkthrough`.
 struct BeatCard: View {
     @Environment(AppModel.self) private var app
     let walkthrough: BeatWalkthrough
@@ -25,7 +26,7 @@ struct BeatCard: View {
     var body: some View {
         let w = walkthrough
         let step = w.current
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Circle().fill(step.beat.kind.color).frame(width: 8, height: 8)
                 Text("Beat \(w.index + 1) of \(w.steps.count)").font(.system(size: 11, weight: .semibold).monospacedDigit())
@@ -39,23 +40,28 @@ struct BeatCard: View {
             }
 
             Text(step.beat.headline)
-                .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.ink3)
+                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
 
-            content(w, step)
-                .id("\(w.index)-\(phaseKey(w.phase))")
+            subtitle(w)
+                .id("\(w.index)-\(w.sceneIndex)-\(phaseKey(w.phase))")
                 .transition(.opacity.combined(with: .offset(y: 3)))
+
+            sceneProgress(w)
+
+            controls(w, step)
 
             HStack(spacing: 4) {
                 transport("backward.fill", "Previous beat (\u{2190})", enabled: w.canGoBack) { w.previous() }
-                transport(w.isPlaying ? "pause.fill" : "play.fill",
-                          w.isPlaying ? "Pause (Space)" : "Play: read every beat aloud and move on (Space)",
+                transport(w.isPlaying || w.isRunning ? "pause.fill" : "play.fill",
+                          w.isPlaying || w.isRunning ? "Pause (Space)" : "Play every beat hands-free (Space)",
                           enabled: true, prominent: true) { w.togglePlay() }
                 transport("forward.fill", "Next beat (\u{2192})", enabled: w.canGoForward) { w.next() }
                 dots(w).padding(.leading, 8)
                 Spacer(minLength: 6)
-                transport(w.isSpeaking ? "speaker.wave.2.fill" : "speaker.wave.2", w.isSpeaking ? "Stop reading" : "Read this beat aloud",
-                          enabled: true) { w.toggleSpeech() }
+                transport("arrow.counterclockwise", "Replay this scene", enabled: !step.scene.isEmpty) { w.replayScene() }
+                transport(w.narrate ? "speaker.wave.2.fill" : "speaker.slash", w.narrate ? "Mute the narrator" : "Read the scene aloud",
+                          enabled: true) { w.narrate.toggle() }
             }
         }
         .padding(.leading, 14).padding(.trailing, 8).padding(.top, 8).padding(.bottom, 6)
@@ -64,49 +70,69 @@ struct BeatCard: View {
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.lesson.opacity(0.45), lineWidth: 1))
         .overlay(alignment: .leading) { Rectangle().fill(step.beat.kind.color).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 1.5)) }
         .animation(.easeOut(duration: 0.2), value: w.index)
+        .animation(.easeOut(duration: 0.2), value: w.sceneIndex)
         .animation(.easeOut(duration: 0.2), value: phaseKey(w.phase))
+        .animation(.easeOut(duration: 0.2), value: w.finished)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Guided review, beat \(w.index + 1) of \(w.steps.count): \(step.beat.title)")
     }
 
     // MARK: Content
 
-    @ViewBuilder private func content(_ w: BeatWalkthrough, _ step: BeatWalkthrough.Step) -> some View {
+    /// The line being spoken, like a video's subtitle; the verdict on a try in its place.
+    @ViewBuilder private func subtitle(_ w: BeatWalkthrough) -> some View {
+        switch w.phase {
+        case .verdict(let v, _, _):
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: v.isCorrect ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(v.isCorrect ? Theme.good : Theme.mist)
+                Text(BetterMove.text(v)).font(.system(size: 15.5, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        default:
+            Text(w.sceneStep?.say ?? "")
+                .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
+                .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// One thin segment per scene step: done, current, to come.
+    private func sceneProgress(_ w: BeatWalkthrough) -> some View {
+        HStack(spacing: 3) {
+            ForEach(w.current.scene.indices, id: \.self) { i in
+                Capsule()
+                    .fill(i < w.sceneIndex || (i == w.sceneIndex && w.finished) ? Theme.lesson.opacity(0.55)
+                          : i == w.sceneIndex ? Theme.lesson : Theme.line2)
+                    .frame(height: 2.5)
+            }
+        }
+        .frame(maxWidth: 220)
+        .accessibilityLabel("Scene step \(w.sceneIndex + 1) of \(w.current.scene.count)")
+    }
+
+    @ViewBuilder private func controls(_ w: BeatWalkthrough, _ step: BeatWalkthrough.Step) -> some View {
         switch w.phase {
         case .asking:
             question(step)
             HStack(spacing: 6) {
-                pill("Show me", "eye", prominent: false) { w.reveal() }
-                pill("Skip", "forward", prominent: false) { w.canGoForward ? w.next() : app.closeLesson() }
+                pill("Skip the question", "forward", prominent: false) { w.continueScene() }
             }
         case .judging:
-            question(step)
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
                 Text("Checking your move\u{2026}").font(.system(size: 13)).foregroundStyle(Theme.ink3)
             }
         case .verdict(let v, _, _):
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: v.isCorrect ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(v.isCorrect ? Theme.good : Theme.mist)
-                Text(BetterMove.text(v)).font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if v.isCorrect {
-                explanation(step)
-                pill("See the game move", "eye", prominent: false) { w.reveal() }
-            } else {
-                HStack(spacing: 6) {
+            HStack(spacing: 6) {
+                if v.isCorrect {
+                    pill("Continue", "play.fill", prominent: true) { w.continueScene() }
+                } else {
                     pill("Try again", "arrow.uturn.backward", prominent: true) { w.clearAttempt() }
-                    pill("Show me", "eye", prominent: false) { w.reveal() }
-                    pill("Skip", "forward", prominent: false) { w.canGoForward ? w.next() : app.closeLesson() }
+                    pill("Show me", "eye", prominent: false) { w.continueScene() }
                 }
             }
-        case .shown(let onAnswer):
-            answer(w, onAnswer: onAnswer)
-            explanation(step)
-        case .explained:
-            explanation(step)
+        case .scene:
+            if w.finished, let r = step.beat.rule { rule(r) }
         }
     }
 
@@ -114,37 +140,18 @@ struct BeatCard: View {
         HStack(spacing: 6) {
             Image(systemName: "questionmark.circle.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.lesson)
             Text(step.quiz.map { BetterMove.prompt(side: $0.side) } ?? "")
-                .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.lesson)
+                .font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Theme.lesson)
             Text("Play it on the board").font(.system(size: 12)).foregroundStyle(Theme.ink3)
         }
     }
 
-    /// "The engine's choice: 9\u{2026}Nbd7. The game went 9\u{2026}b5, and 10. Nxb5 punished it."
-    private func answer(_ w: BeatWalkthrough, onAnswer: Bool) -> some View {
-        var parts: [String] = []
-        if let b = w.bestLabel { parts.append("The engine's choice: \(b).") }
-        if let p = w.playedLabel {
-            parts.append(w.refutationLabel.map { "The game went \(p), and \($0) punished it." } ?? "The game went \(p).")
+    private func rule(_ r: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "checkmark.seal.fill").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.good)
+            Text(r).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink).fixedSize(horizontal: false, vertical: true)
         }
-        return HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: "lightbulb.fill").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.good)
-            Text(parts.joined(separator: " ")).font(.system(size: 13.5, weight: .medium)).foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    @ViewBuilder private func explanation(_ step: BeatWalkthrough.Step) -> some View {
-        if let e = step.beat.explain {
-            Text(e).font(.system(size: 13.5)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
-        }
-        if let r = step.beat.rule {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "checkmark.seal.fill").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.good)
-                Text(r).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink).fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(Theme.good.opacity(0.10), in: RoundedRectangle(cornerRadius: 4))
-        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(Theme.good.opacity(0.10), in: RoundedRectangle(cornerRadius: 4))
     }
 
     private func beatMove(_ step: BeatWalkthrough.Step) -> String {
@@ -156,8 +163,7 @@ struct BeatCard: View {
         case .asking: "ask"
         case .judging: "judge"
         case .verdict(let v, let m, _): "verdict-\(m.uci)-\(v.isCorrect)"
-        case .shown(let a): "shown-\(a)"
-        case .explained: "explained"
+        case .scene: "scene"
         }
     }
 

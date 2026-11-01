@@ -101,7 +101,18 @@ public enum SummaryPrompt {
         works), a punish beat's "at" is the reply that exploited it. Write for a club player: vivid but concrete, \
         built around threats, plans and ideas, never evaluation numbers. The headline is one short sentence; the \
         rule is a memorable rule of thumb.
-        Keep the whole answer under 850 words.
+        Give each slip and turning beat a "script": the scene the app acts out on the board like a GothamChess \
+        video, 6-12 steps (leave it out on other beats; the app writes those). It starts on the position before the \
+        beat's move, the question. In order: the stakes; ask what the player would play (that step has "ask": true \
+        and plays nothing; the player tries a move there); the game move; "But..." and the refutation, 2-4 moves ending \
+        on the punchline (the piece lost, the fork, the mate); "rewind": "root" and "So instead..." with the better \
+        move and its idea in one sentence (the idea, not an evaluation); then "rewind": "game" and "And in the \
+        game...". "play" holds SAN moves from the scene's current position, at most 2 per step, played while "say" is read \
+        (bundle a forced recapture: "takes, takes"). Write "say" as speech: one idea, 4-14 words, moves the way \
+        people say them ("queen b3", "knight takes f7"), the threat named in plain English as the move lands \
+        ("Queen b3. Now b7 and f7 are both hanging."), connectors that vary ("and now", "but wait", "what's the \
+        problem?", "here's the point"), a rhetorical question or two, light humour welcome, no numbers.
+        Keep the whole answer under 1200 words.
         """ + (tool ? "\n" + EngineTool.instructions : "")
     }
 
@@ -111,7 +122,10 @@ public enum SummaryPrompt {
     }
 
     /// The JSON shape of one story beat.
-    static let beat = #"{"kind": "setup, slip, turning, punish, finish or idea", "at": "the game move, like 6...Nf6", "title": "2-4 words, like The slip", "headline": "one short sentence", "explain": "2-3 plain sentences built around threats, plans and ideas", "rule": "one memorable rule of thumb", "arrows": ["optional, at most 3, like b5e8"], "circles": ["optional, at most 4 squares, like f6"]}"#
+    static let beat = #"{"kind": "setup, slip, turning, punish, finish or idea", "at": "the game move, like 6...Nf6", "title": "2-4 words, like The slip", "headline": "one short sentence", "explain": "2-3 plain sentences built around threats, plans and ideas", "rule": "one memorable rule of thumb", "arrows": ["optional, at most 3, like b5e8"], "circles": ["optional, at most 4 squares, like f6"], "script": [\#(sceneStep)]}"#
+
+    /// The JSON shape of one step of a beat's scene.
+    static let sceneStep = #"{"say": "one short spoken line", "play": ["optional, 0-2 SAN moves from the scene's current position, like Qb3"], "rewind": "optional, root or game: jump back before this step", "ask": "optional, true on the step that asks the player", "arrows": ["optional, like b3f7"], "circles": ["optional, like b7"]}"#
 
     /// The JSON shape of one story step.
     static let storyStep = #"{"at": "the game move whose position is shown, like 6...Nf6, or start", "say": "1-2 short spoken sentences about this position", "circles": ["optional, at most 4 squares to circle, like f6"], "arrows": ["optional, at most 3, like b5e8"], "line": ["optional, at most 6 legal UCI moves to animate from this position, like e1c1"], "pause": "optional seconds to hold, like 1"}"#

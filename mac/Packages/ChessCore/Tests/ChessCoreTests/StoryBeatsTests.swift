@@ -86,7 +86,7 @@ final class StoryBeatsTests: XCTestCase {
         let t = b[3]
         XCTAssertEqual(t.title, "The turning point")
         XCTAssertEqual(t.headline, "Black's 9\u{2026}b5 is a blunder.")
-        XCTAssertEqual(t.explain, "Stronger was 9\u{2026}Nbd7. It allows 10. Nxb5.")
+        XCTAssertEqual(t.explain, "Stronger was 9\u{2026}Nbd7. After 9\u{2026}b5, 10. Nxb5 takes on b5.")
         XCTAssertEqual(t.rule, StoryBeats.genericRule(severity: 3))
         XCTAssertEqual(t.arrows.map(\.uci), ["c3b5"])
         XCTAssertEqual(b[4].headline, "White punishes it with 10. Nxb5.")

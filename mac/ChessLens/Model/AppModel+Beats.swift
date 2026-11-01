@@ -25,7 +25,7 @@ extension AppModel {
     }
 
     /// The story of the reviewed game: the AI lesson's beats, or beats made from the review (and whatever lesson
-    /// there is) when it has none. Each with its node and, at an error, its question. Empty without a review.
+    /// there is) when it has none. Each with its node, its scene and, at an error, its question. Empty without a review.
     func storySteps() -> [BeatWalkthrough.Step] {
         guard review.hasResults, !review.running, let (line, path) = reviewedLine() else { return [] }
         var lesson: GameLesson?
@@ -36,8 +36,26 @@ extension AppModel {
             let i = ply - line.firstPly + 1
             guard path.indices.contains(i) else { return nil }
             let id = path[i]
-            return BeatWalkthrough.Step(beat: b, nodeID: id, quiz: quiz(at: id))
+            let q = quiz(at: id)
+            return BeatWalkthrough.Step(beat: b, nodeID: id, quiz: q, scene: scene(for: b, at: id, quiz: q))
         }
+    }
+
+    /// The beat's scene: the AI's script when it replays from the scene's start (a question is added at an error
+    /// if it has none), else one written from the review (see `SceneWriter`).
+    private func scene(for beat: GameLesson.Beat, at id: Int, quiz q: BeatWalkthrough.Quiz?) -> [GameLesson.SceneStep] {
+        let node = game.nodes[id]
+        let root = game.nodes[q?.parentID ?? id].position
+        let script = BeatScene.validated(beat.script, root: root, game: node.position)
+        if !script.isEmpty, script.count == beat.script.count || script.count >= 4 {
+            return q == nil ? script : BeatScene.ensuringAsk(script)
+        }
+        let moment = q.map {
+            SceneWriter.Moment(root: root, played: $0.played, refutation: $0.refutation, best: $0.best,
+                               classification: review.entries[id]?.cls?.name)
+        }
+        return SceneWriter.scene(beat: beat, moment: moment, lastMove: node.move,
+                                 before: node.parent.map { game.nodes[$0].position })
     }
 
     /// "Find a better move" at `id` when the move leading there was an error by the side that played it.

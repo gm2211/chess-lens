@@ -216,12 +216,13 @@ struct BoardView: View {
                     .position(c)
                     .zIndex(dragging ? 10 : 1)
                     .transition(.opacity)
-                    .animation(dragging ? nil : .easeInOut(duration: previewing ? LessonPlayer.lineMoveAnimation : 0.3), value: inst.square)
+                    .animation(dragging ? nil : .easeInOut(duration: slideDuration), value: inst.square)
             }
         }
         // Captured pieces fade out (and come back in when stepping backwards or when a line preview ends).
         .animation(.easeOut(duration: 0.2), value: app.currentID)
         .animation(.easeOut(duration: 0.2), value: app.lessonPlayer?.linePly)
+        .animation(.easeOut(duration: 0.3), value: app.walkthrough?.sceneMoves.count)
         .animation(.easeOut(duration: 0.2), value: app.walkthrough?.epoch)
         .frame(width: side, height: side, alignment: .topLeading)
         .allowsHitTesting(false)
@@ -269,6 +270,11 @@ struct BoardView: View {
 
     /// A lesson line is being acted out on top of the game position.
     private var previewing: Bool { app.lessonPreview != nil }
+    /// A guided-review scene slides its pieces slowly; lesson lines a little faster; ordinary moves quickly.
+    private var slideDuration: Double {
+        if app.walkthrough?.slowSlides == true { return BeatWalkthrough.moveAnimation }
+        return previewing ? LessonPlayer.lineMoveAnimation : 0.3
+    }
 
     /// Rings around the squares the lesson step talks about, popping in when the step starts.
     private func circleLayer(_ g: BoardGeometry) -> some View {
