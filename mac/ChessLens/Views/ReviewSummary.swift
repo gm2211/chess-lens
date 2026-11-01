@@ -493,7 +493,8 @@ struct SummaryCard: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // Fill the height SideBySideOrStacked offers, so the two cards match when side by side.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 5))
         .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.line, lineWidth: 1))
     }
