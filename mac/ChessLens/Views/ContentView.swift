@@ -147,6 +147,14 @@ struct BoardColumn: View {
                     BoardView(side: side)
                 }
                 .frame(width: side + barW + gap, height: side)
+                .overlay(alignment: app.position.turn == .white
+                         ? (app.flipped ? .topTrailing : .bottomTrailing)
+                         : (app.flipped ? .bottomTrailing : .topTrailing)) {
+                    TurnDot(turn: app.position.turn)
+                        .offset(x: 16)
+                }
+                .animation(.easeInOut(duration: 0.25), value: app.position.turn)
+                .animation(.easeInOut(duration: 0.25), value: app.flipped)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             NavigationRow()
@@ -185,41 +193,50 @@ private struct NavigationRow: View {
     }
 }
 
+/// Small dot just outside the board's right edge, beside the side-to-move's back rank.
+private struct TurnDot: View {
+    let turn: Side
+    var body: some View {
+        let name = turn == .white ? "White" : "Black"
+        Circle()
+            .fill(turn == .white ? Color(red: 0.96, green: 0.96, blue: 0.94) : Color(red: 0.106, green: 0.133, blue: 0.125))
+            .overlay(Circle().stroke(Theme.ink2, lineWidth: 1.2))
+            .frame(width: 11, height: 11)
+            .help("\(name) to move")
+            .accessibilityLabel("\(name) to move")
+    }
+}
+
+/// Banner shown only for notable states (check, mate, draws). Nothing otherwise.
 private struct CoachBar: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        let accent = borderColor
-        HStack(spacing: 10) {
-            content
-            Spacer(minLength: 0)
+        Group {
+            if let text = message {
+                HStack(spacing: 10) {
+                    Text(text).font(.system(size: 14)).foregroundStyle(Theme.ink2)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .frame(minHeight: 44)
+                .frame(maxWidth: 520 + 36, alignment: .leading)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 4))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.line, lineWidth: 1))
+                .overlay(alignment: .leading) { Rectangle().fill(Theme.line2).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 1.5)) }
+                .transition(.opacity)
+            }
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .frame(minHeight: 44)
-        .frame(maxWidth: 520 + 36, alignment: .leading)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.line, lineWidth: 1))
-        .overlay(alignment: .leading) { Rectangle().fill(accent).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 1.5)) }
-        .padding(.leading, 0)
-        .animation(.easeOut(duration: 0.15), value: app.currentID)
+        .animation(.easeOut(duration: 0.15), value: message)
     }
 
-    private var borderColor: Color { Theme.line2 }
-
-    @ViewBuilder
-    private var content: some View {
+    private var message: AttributedString? {
         let pos = app.position
-        if pos.isCheckmate {
-            Text("Checkmate \u{2014} **\(pos.turn == .white ? "Black" : "White")** wins").font(.system(size: 14)).foregroundStyle(Theme.ink2)
-        } else if pos.isStalemate {
-            Text("Stalemate \u{2014} the game is drawn").font(.system(size: 14)).foregroundStyle(Theme.ink2)
-        } else if pos.isInsufficientMaterial {
-            Text("Draw by insufficient material").font(.system(size: 14)).foregroundStyle(Theme.ink2)
-        } else {
-            Circle().fill(pos.turn == .white ? Color(red: 0.96, green: 0.96, blue: 0.94) : Color(red: 0.106, green: 0.133, blue: 0.125))
-                .overlay(Circle().stroke(Theme.ink2, lineWidth: 1.5)).frame(width: 12, height: 12)
-            Text("**\(pos.turn == .white ? "White" : "Black")** to move\(pos.isCheck ? " \u{2014} in check" : "")")
-                .font(.system(size: 14)).foregroundStyle(Theme.ink2)
-        }
+        let mover = pos.turn == .white ? "White" : "Black"
+        if pos.isCheckmate { return try? AttributedString(markdown: "Checkmate \u{2014} **\(pos.turn == .white ? "Black" : "White")** wins") }
+        if pos.isStalemate { return AttributedString("Stalemate \u{2014} the game is drawn") }
+        if pos.isInsufficientMaterial { return AttributedString("Draw by insufficient material") }
+        if pos.isCheck { return try? AttributedString(markdown: "**\(mover)** is in check") }
+        return nil
     }
 }

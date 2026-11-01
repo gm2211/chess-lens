@@ -292,6 +292,12 @@ final class UCITests: XCTestCase {
         XCTAssertEqual(i.eval(whiteToMove: false), .mate(3))
         XCTAssertEqual(Eval.mate(3).display, "M3")
         XCTAssertEqual(Eval.mate(-2).display, "-M2")
+        XCTAssertEqual(Eval.cp(40).barLabel, "+0.4")
+        XCTAssertEqual(Eval.cp(-120).barLabel, "\u{2212}1.2")
+        XCTAssertEqual(Eval.cp(2).barLabel, "0.0")
+        XCTAssertEqual(Eval.mate(-3).barLabel, "\u{2212}M3")
+        XCTAssertEqual(Eval.mate(3).plainDescription, "White mates in 3")
+        XCTAssertEqual(Eval.cp(-120).plainDescription, "Black is better by 1.2 pawns")
     }
 
     func testIgnoresNonSearchLines() {

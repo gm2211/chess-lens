@@ -36,8 +36,9 @@ struct EvalBar: View {
         .frame(width: 26)
         .clipShape(RoundedRectangle(cornerRadius: 3))
         .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.barLine, lineWidth: 1))
+        .help(shown?.plainDescription ?? "No evaluation yet")
         .accessibilityElement()
         .accessibilityLabel("Evaluation")
-        .accessibilityValue(shown?.display ?? "none")
+        .accessibilityValue(shown?.plainDescription ?? "none")
     }
 }

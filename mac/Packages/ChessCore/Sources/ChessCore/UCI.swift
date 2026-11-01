@@ -35,12 +35,31 @@ public enum Eval: Sendable, Equatable, Hashable {
         }
     }
 
-    /// Short form for the eval bar ("0.4", "M3").
+    /// Short signed form for the eval bar, always from White's view: "+0.4", "\u{2212}1.2", "0.0", "M3", "\u{2212}M3".
     public var barLabel: String {
         switch self {
-        case .mate(let m): return "M\(abs(m))"
+        case .mate(let m): return m < 0 ? "\u{2212}M\(abs(m))" : "M\(m)"
         case .checkmate(let w): return w == .white ? "1-0" : "0-1"
-        case .cp(let c): return String(format: "%.1f", abs(Double(c) / 100))
+        case .cp(let c):
+            let v = abs(Double(c) / 100)
+            let body = v >= 10 ? String(format: "%.0f", v) : String(format: "%.1f", v)
+            if body == "0.0" { return body }
+            return (c > 0 ? "+" : "\u{2212}") + body
+        }
+    }
+
+    /// Plain-language reading of the score, for tooltips.
+    public var plainDescription: String {
+        switch self {
+        case .mate(let m):
+            if m == 0 { return "Equal" }
+            return m > 0 ? "White mates in \(m)" : "Black mates in \(-m)"
+        case .checkmate(let w): return w == .white ? "White has won by checkmate" : "Black has won by checkmate"
+        case .cp(let c):
+            let v = abs(Double(c) / 100)
+            let t = v >= 10 ? String(format: "%.0f", v) : String(format: "%.1f", v)
+            if t == "0.0" { return "Equal" }
+            return (c > 0 ? "White" : "Black") + " is better by \(t) pawns"
         }
     }
 }
