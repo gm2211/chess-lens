@@ -7,7 +7,7 @@ variations, bundled Stockfish 18 analysis and a full-game review.
 
 ```sh
 mac/scripts/build-stockfish.sh      # clones Stockfish sf_18, builds it inside safe-run, copies binary + NNUE nets to mac/vendor/bin
-mac/scripts/fetch-kokoro.sh         # downloads the Kokoro voice + sherpa-onnx static libs (pinned, sha256-checked) into mac/vendor/kokoro
+mac/scripts/fetch-kokoro.sh         # sherpa-onnx static libs (linked into the app) + a dev copy of the Kokoro model (pinned, sha256-checked) into mac/vendor/kokoro
 mac/scripts/build-app.sh            # xcodegen + Release build in safe-run; installs mac/build/Etude.app when the app isn't running
 open mac/build/Etude.app
 ```
@@ -22,24 +22,45 @@ the nets to `Contents/Resources/Networks`, signs the helper with sandbox + inher
 Stockfish's GPLv3 text as `Stockfish-Copying.txt`. The build fails with a pointer to the script if `vendor/bin/stockfish` is missing.
 (The nets are shipped as files because the nets embedded in the binary did not load in this build.)
 
-## Lesson narration (Kokoro)
+## Lesson narration (system voice, Ava, Kokoro)
 
-Lessons are read aloud by [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0), run on the CPU inside the
-app through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0) and onnxruntime, linked statically. Nothing
-leaves the Mac and no helper process is started. `scripts/fetch-kokoro.sh` pins sherpa-onnx v1.13.8
-(`osx-arm64-static-lib`) and `kokoro-multi-lang-v1_0` by URL + SHA-256 and fills `mac/vendor/kokoro/{lib,model}`
-(gitignored; only English espeak-ng data is kept). The "Embed Kokoro voice" build phase (`scripts/embed-kokoro.sh`) copies
-`model/` to `Contents/Resources/Kokoro` (about 364 MB); the build fails with a pointer to the fetch script if it is missing.
+The app ships with no voice model. Lessons are read by the **best installed English system voice**
+(AVSpeechSynthesizer): Premium beats Enhanced beats Standard, then the user's own English variant, then US English, then
+Ava (`Packages/VoiceKit`, `SystemVoicePicker`). Novelty and Eloquence voices are never picked. The voice list is re-scanned
+whenever the app becomes active, so a voice downloaded in System Settings is used without a restart.
 
-Code: `Packages/KokoroTTS` (C API module, `KokoroEngine`, voices, sentence splitting) and `ChessLens/Narration`
-(`Narrator` protocol, `VoiceNarrator` used by `LessonPlayer`, `KokoroNarrator` with AVAudioEngine playback,
-`SystemNarrator` = AVSpeechSynthesizer, used when the chosen voice is "System voice" or Kokoro fails to load). Text is
-cut into sentences; the first plays while the rest are synthesized, and the player prefetches the current and next
-step's narration. The voice (Heart, Bella, Emma, Michael or System) is picked in the lesson bar's speaker menu or
-Settings > Voice and stored in `lesson.voice`.
+**Apple Premium voices (Ava etc.).** Apple does not let apps download system voices. Settings > Voice lists the installed
+English voices grouped by quality, shows "Ava (Premium) is installed" when it is, and otherwise offers "Get Ava (Premium)"
+with a button that opens System Settings. It tries `x-apple.systempreferences:com.apple.Accessibility-Settings.extension?SpokenContent`,
+then the legacy `com.apple.preference.universalaccess` pane id (System Settings maps it to the Accessibility extension;
+an unknown anchor lands on Accessibility), and spells out the path: Accessibility > Spoken Content > System Voice > Manage Voices.
+
+**Kokoro on demand.** [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0) runs on the CPU inside the
+app through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0) and onnxruntime, linked statically into the
+app binary. Settings > Voice > "Natural voice (Kokoro, ~350 MB download)" downloads the pinned
+`kokoro-multi-lang-v1_0.tar.bz2` (URL + SHA-256 in `KokoroAsset.v1_0`) with progress and Cancel, checks the SHA-256,
+unpacks only what the voice needs (model.onnx, voices.bin, tokens.txt, the two English lexicons, espeak-ng-data with
+only `en_dict`, LICENSE) with `/usr/bin/tar` (a child process inherits the App Sandbox) and moves it into
+`~/Library/Containers/app.chesslens.ChessLens/Data/Library/Application Support/Étude/Voices/Kokoro` in one step
+(about 378 MB). Failures (offline, HTTP error, checksum mismatch, no space) leave nothing behind and show why. Once
+installed, Heart, Bella, Emma and Michael are selectable (Heart is switched to right away) and Settings shows the disk usage and a Remove button.
+`KokoroRuntime` also loads a model a developer puts in `Contents/Resources/Kokoro`. If Kokoro is missing or fails to
+load, `VoiceNarrator` falls back to the system voice.
+
+Code: `Packages/VoiceKit` (system voice ranking, `KokoroStore`, `KokoroInstaller`; no sherpa dependency, `swift test`
+runs on its own), `Packages/KokoroTTS` (C API module, `KokoroEngine`, voices, sentence splitting) and
+`ChessLens/Narration` (`VoiceLibrary` = installed voices + download state, `Narrator` protocol, `VoiceNarrator` used by
+`LessonPlayer`, `KokoroNarrator` with AVAudioEngine playback, `SystemNarrator` = AVSpeechSynthesizer). Text is cut into
+sentences; the first plays while the rest are synthesized, and the player prefetches the current and next step's
+narration. The voice is picked in the lesson bar's speaker menu (best system voice + installed Kokoro voices +
+"Get More Voices…", which opens Settings > Voice) or in Settings > Voice, and stored in `lesson.voice`
+(`system`, `system:<identifier>` or a Kokoro voice id).
 
 ```sh
 mac/scripts/check-kokoro.sh [model-dir] [voice] [text]   # headless: synthesizes to build/kokoro-check.wav, prints timings and RMS
+mac/scripts/check-voice-install-sandbox.sh               # headless: runs the download/verify/unpack path under the App Sandbox
+# The install path outside the sandbox, into any folder (then point check-kokoro.sh at <dest>/Kokoro):
+(cd mac/Packages/VoiceKit && swift run -c release voice-install ../../vendor/kokoro-dl/kokoro-multi-lang-v1_0.tar.bz2 <dest>)
 ```
 
 ## AI commentary

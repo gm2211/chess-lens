@@ -3,14 +3,12 @@
 # and synthesizes a sentence to build/kokoro-check.wav, printing load time, time to first audio, duration and RMS.
 # Nothing is played. Runs inside safe-run.
 #   mac/scripts/check-kokoro.sh [model-dir] [voice] [text]
-# model-dir defaults to the app bundle's copy (build/Etude.app/Contents/Resources/Kokoro), else vendor/kokoro/model.
+# model-dir defaults to vendor/kokoro/model (fetch-kokoro.sh). Point it at a folder the app's installer filled
+# (voice-install's <dest>/Kokoro) to check a downloaded install.
 set -euo pipefail
 MAC="$(cd "$(dirname "$0")/.." && pwd -P)"
 DIR="${1:-}"
-if [ -z "$DIR" ]; then
-  DIR="$MAC/build/Etude.app/Contents/Resources/Kokoro"
-  [ -d "$DIR" ] || DIR="$MAC/vendor/kokoro/model"
-fi
+[ -n "$DIR" ] || DIR="$MAC/vendor/kokoro/model"
 if [ ! -f "$MAC/vendor/kokoro/lib/libsherpa-onnx-c-api.a" ]; then
   echo "error: Kokoro is missing at $MAC/vendor/kokoro. Run mac/scripts/fetch-kokoro.sh first." >&2
   exit 1

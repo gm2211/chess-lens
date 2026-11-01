@@ -8,6 +8,9 @@ final class SystemNarrator: NSObject, Narrator, AVSpeechSynthesizerDelegate {
     private var waiting: CheckedContinuation<Void, Never>?
     private var utterance: AVSpeechUtterance?
 
+    /// The AVSpeechSynthesisVoice identifier to use; nil (or a voice that is gone) means the current language's default.
+    var voiceID: String?
+
     var isSpeaking: Bool { synth.isSpeaking }
 
     override init() {
@@ -18,7 +21,8 @@ final class SystemNarrator: NSObject, Narrator, AVSpeechSynthesizerDelegate {
     func speak(_ text: String) async {
         stop()
         let u = AVSpeechUtterance(string: NarrationText.spoken(text))
-        u.voice = AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
+        u.voice = voiceID.flatMap(AVSpeechSynthesisVoice.init(identifier:))
+            ?? AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
         u.rate = AVSpeechUtteranceDefaultSpeechRate
         u.postUtteranceDelay = 0.1
         await withTaskCancellationHandler {

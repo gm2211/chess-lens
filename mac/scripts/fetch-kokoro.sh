@@ -1,7 +1,9 @@
 #!/bin/bash
 # Fetches the Kokoro-82M neural voice used for lesson narration into mac/vendor/kokoro (gitignored):
 #   lib/    sherpa-onnx v1.13.8 static libraries for macOS arm64 (C API + onnxruntime + espeak-ng), linked into the app
-#   model/  kokoro-multi-lang-v1_0: fp32 model (int8 is 3x smaller but slower than real time on Apple Silicon), voices, tokens, English lexicons, espeak-ng-data (English only)
+#   model/  for development and scripts/check-kokoro.sh only (the app downloads it on demand, Packages/VoiceKit):
+#           kokoro-multi-lang-v1_0: fp32 model (int8 is 3x smaller but slower than real time on Apple Silicon), voices, tokens, English lexicons, espeak-ng-data (English only)
+# The archive stays in vendor/kokoro-dl for scripts/check-voice-install-sandbox.sh.
 # Downloads run inside safe-run with --net; every archive is checked against a pinned SHA-256 before it is unpacked.
 set -euo pipefail
 MAC="$(cd "$(dirname "$0")/.." && pwd -P)"

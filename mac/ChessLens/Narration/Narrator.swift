@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import KokoroTTS
+import VoiceKit
 
 /// A lesson voice. `speak` returns when the narration has been heard to the end, or was stopped or its task
 /// cancelled, which is what LessonPlayer's auto-advance waits on.
@@ -17,18 +18,30 @@ extension Narrator {
     func prepare(_ texts: [String]) {}
 }
 
-/// The voice lessons are read in: one of the bundled Kokoro voices or the macOS system voice.
+/// The voice lessons are read in: a downloaded Kokoro voice, or a macOS system voice (nil = the best one installed,
+/// which is the default, so a newly installed Premium voice is picked up on its own).
 enum NarratorVoice: Hashable, Identifiable {
     case kokoro(KokoroVoice)
-    case system
+    case system(String?)
+
+    static let bestSystem = NarratorVoice.system(nil)
 
     var id: String { storageValue }
-    var storageValue: String { if case .kokoro(let v) = self { v.rawValue } else { "system" } }
+    var storageValue: String {
+        switch self {
+        case .kokoro(let v): v.rawValue
+        case .system(nil): "system"
+        case .system(let id?): "system:" + id
+        }
+    }
     init?(storageValue: String) {
-        if storageValue == "system" { self = .system } else if let v = KokoroVoice(rawValue: storageValue) { self = .kokoro(v) } else { return nil }
+        if storageValue == "system" { self = .system(nil) }
+        else if storageValue.hasPrefix("system:") { self = .system(String(storageValue.dropFirst("system:".count))) }
+        else if let v = KokoroVoice(rawValue: storageValue) { self = .kokoro(v) }
+        else { return nil }
     }
 
-    var displayName: String { if case .kokoro(let v) = self { v.displayName } else { "System voice" } }
+    var isKokoro: Bool { if case .kokoro = self { true } else { false } }
 }
 
 /// The chosen lesson voice, persisted in UserDefaults (`lesson.voice`).
@@ -37,18 +50,47 @@ final class NarrationSettings {
     static let shared = NarrationSettings()
     static let voiceKey = "lesson.voice"
 
-    /// The voices on offer: the bundled Kokoro ones (if the model is in the app) and the system voice.
-    let voices: [NarratorVoice]
+    private let library = VoiceLibrary.shared
 
+    /// What the user picked. May name a voice that is no longer installed; `effectiveVoice` is what is used.
     var voice: NarratorVoice {
         didSet { UserDefaults.standard.set(voice.storageValue, forKey: Self.voiceKey) }
     }
 
     private init() {
-        let offered = (KokoroRuntime.isBundled ? KokoroVoice.allCases.map(NarratorVoice.kokoro) : []) + [.system]
-        let saved = UserDefaults.standard.string(forKey: Self.voiceKey).flatMap(NarratorVoice.init(storageValue:))
-        voices = offered
-        voice = saved.flatMap { offered.contains($0) ? $0 : nil } ?? offered[0]
+        voice = UserDefaults.standard.string(forKey: Self.voiceKey).flatMap(NarratorVoice.init(storageValue:)) ?? .bestSystem
+    }
+
+    /// The chosen voice if it is still installed, else the best system voice.
+    var effectiveVoice: NarratorVoice {
+        switch voice {
+        case .kokoro: library.kokoroInstalled ? voice : .bestSystem
+        case .system(let id?): library.systemVoices.contains { $0.id == id } ? voice : .bestSystem
+        case .system(nil): voice
+        }
+    }
+
+    /// The system voice identifier to speak with (nil: let AVSpeechSynthesizer pick for the current language).
+    var systemVoiceID: String? {
+        if case .system(let id?) = effectiveVoice { return id }
+        return library.bestSystemVoice?.id
+    }
+
+    /// The voices the lesson bar offers: the best system voice, the specific system voice chosen in Settings (if
+    /// any) and the Kokoro voices once downloaded.
+    var menuVoices: [NarratorVoice] {
+        var vs: [NarratorVoice] = [.bestSystem]
+        if case .system(_?) = effectiveVoice { vs.append(effectiveVoice) }
+        if library.kokoroInstalled { vs += KokoroVoice.allCases.map(NarratorVoice.kokoro) }
+        return vs
+    }
+
+    func displayName(_ v: NarratorVoice) -> String {
+        switch v {
+        case .kokoro(let k): return k.displayName
+        case .system(nil): return library.bestSystemVoice.map { "\($0.displayName), best system voice" } ?? "System voice"
+        case .system(let id?): return library.systemVoices.first { $0.id == id }?.displayName ?? "System voice"
+        }
     }
 }
 
@@ -80,7 +122,7 @@ enum NarrationText {
 }
 
 /// What LessonPlayer talks to: speaks with the voice chosen in NarrationSettings, falling back to the system voice
-/// when the Kokoro model is missing or fails to load.
+/// when Kokoro is not installed or fails to load.
 @MainActor
 final class VoiceNarrator: Narrator {
     private let settings = NarrationSettings.shared
@@ -92,7 +134,7 @@ final class VoiceNarrator: Narrator {
 
     func speak(_ text: String) async {
         stop()
-        if case .kokoro(let v) = settings.voice {
+        if case .kokoro(let v) = settings.effectiveVoice {
             active = kokoro
             switch await kokoro.speak(text, voice: v) {
             case .finished, .stopped: return
@@ -100,6 +142,7 @@ final class VoiceNarrator: Narrator {
             }
         }
         active = system
+        system.voiceID = settings.systemVoiceID
         await system.speak(text)
     }
 
@@ -109,6 +152,6 @@ final class VoiceNarrator: Narrator {
     }
 
     func prepare(_ texts: [String]) {
-        if case .kokoro(let v) = settings.voice { kokoro.prepare(texts, voice: v) }
+        if case .kokoro(let v) = settings.effectiveVoice { kokoro.prepare(texts, voice: v) }
     }
 }

@@ -1,19 +1,32 @@
 import Foundation
 import AVFoundation
 import KokoroTTS
+import VoiceKit
 
-/// Loads the bundled Kokoro model (Contents/Resources/Kokoro, see scripts/embed-kokoro.sh) off the main thread and
-/// keeps one engine, for the accent in use, for the life of the app.
+/// Loads the Kokoro model off the main thread and keeps one engine, for the accent in use, for the life of the app.
+/// The model is downloaded on demand into Application Support (VoiceLibrary); a developer build may also carry one in
+/// Contents/Resources/Kokoro.
 @MainActor
 final class KokoroRuntime {
     static let shared = KokoroRuntime()
+    static let store = KokoroStore.standard
 
-    static let directory: URL? = {
+    /// Where the model is, or nil when Kokoro is not installed. Re-read with `refresh()` after an install or removal.
+    private(set) static var directory: URL? = locate()
+    static var isAvailable: Bool { directory != nil }
+
+    private static func locate() -> URL? {
+        if store.isInstalled { return store.directory }
         guard let dir = Bundle.main.resourceURL?.appendingPathComponent("Kokoro", isDirectory: true),
               FileManager.default.fileExists(atPath: dir.appendingPathComponent("voices.bin").path) else { return nil }
         return dir
-    }()
-    static var isBundled: Bool { directory != nil }
+    }
+
+    /// Picks up a new install (or its removal) and drops the loaded engine.
+    static func refresh() {
+        directory = locate()
+        shared.loading = nil
+    }
 
     private var loading: (accent: KokoroVoice.Accent, task: Task<KokoroEngine?, Never>)?
 
@@ -121,7 +134,7 @@ final class KokoroNarrator {
 
     func speak(_ text: String, voice: KokoroVoice) async -> Outcome {
         stop()
-        guard KokoroRuntime.isBundled else { return .unavailable }
+        guard KokoroRuntime.isAvailable else { return .unavailable }
         generation += 1
         let gen = generation
         let keys = Self.chunks(text).map { KokoroSynthQueue.Key(voice: voice, text: $0) }
