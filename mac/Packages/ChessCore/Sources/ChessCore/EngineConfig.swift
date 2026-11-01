@@ -7,15 +7,17 @@ public struct EngineConfig: Codable, Equatable, Sendable {
     public var hash: Int
     /// Pause live analysis when the Mac is hot or in Low Power Mode.
     public var pauseWhenHot: Bool
+    /// Seconds each position is analysed before the engine stops by itself; 0 means unlimited.
+    public var budgetSeconds: Int
 
     public static let defaultLines = 3
     public static let defaultHash = 256
 
-    public init(lines: Int = defaultLines, threads: Int, hash: Int = defaultHash, pauseWhenHot: Bool = true) {
-        self.lines = lines; self.threads = threads; self.hash = hash; self.pauseWhenHot = pauseWhenHot
+    public init(lines: Int = defaultLines, threads: Int, hash: Int = defaultHash, pauseWhenHot: Bool = true, budgetSeconds: Int = EngineConfig.defaultBudgetSeconds) {
+        self.lines = lines; self.threads = threads; self.hash = hash; self.pauseWhenHot = pauseWhenHot; self.budgetSeconds = budgetSeconds
     }
 
-    private enum CodingKeys: String, CodingKey { case lines, threads, hash, pauseWhenHot }
+    private enum CodingKeys: String, CodingKey { case lines, threads, hash, pauseWhenHot, budgetSeconds }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -23,6 +25,7 @@ public struct EngineConfig: Codable, Equatable, Sendable {
         threads = try c.decode(Int.self, forKey: .threads)
         hash = try c.decodeIfPresent(Int.self, forKey: .hash) ?? Self.defaultHash
         pauseWhenHot = try c.decodeIfPresent(Bool.self, forKey: .pauseWhenHot) ?? true
+        budgetSeconds = try c.decodeIfPresent(Int.self, forKey: .budgetSeconds) ?? Self.defaultBudgetSeconds
     }
 }
 

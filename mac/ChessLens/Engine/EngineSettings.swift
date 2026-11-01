@@ -8,6 +8,7 @@ final class EngineSettings {
     static let lineRange = 1...5
     static var threadRange: ClosedRange<Int> { 1...max(1, ProcessInfo.processInfo.activeProcessorCount) }
     private static let key = "engineSettings"
+    private static let threadsMigratedKey = "engineThreadsDefaultMigrated"
 
     private(set) var config: EngineConfig
     /// Called with (old, new) after a change was stored.
@@ -16,10 +17,16 @@ final class EngineSettings {
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode(EngineConfig.self, from: data) {
+            var saved = saved
+            // One-time: users who never changed threads (still the old "all performance cores") get the cooler default.
+            if !UserDefaults.standard.bool(forKey: Self.threadsMigratedKey) {
+                saved.threads = EngineConfig.migratedThreads(saved: saved.threads, performanceCores: UCIEngine.performanceCoreCount)
+            }
             config = Self.clamped(saved)
         } else {
-            config = Self.clamped(EngineConfig(threads: UCIEngine.performanceCoreCount))
+            config = Self.clamped(EngineConfig(threads: EngineConfig.defaultThreads(performanceCores: UCIEngine.performanceCoreCount)))
         }
+        UserDefaults.standard.set(true, forKey: Self.threadsMigratedKey)
     }
 
     private static func clamped(_ c: EngineConfig) -> EngineConfig {

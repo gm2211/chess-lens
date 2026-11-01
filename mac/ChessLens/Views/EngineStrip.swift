@@ -93,6 +93,10 @@ struct EngineStrip: View {
     private func pausedText(depth: Int?) -> String {
         switch app.engine.pauseReason {
         case .cool(let r)?: depth.map { "\(r.message) \u{00B7} d\($0)" } ?? r.message
+        case .budget?:
+            ["Done", depth.map { "d\($0)" }, EngineConfig.budgetLabel(settings.config.budgetSeconds)]
+                .compactMap { $0 }.joined(separator: " \u{00B7} ")
+        case .inactive?: depth.map { "Paused \u{2014} window not active \u{00B7} d\($0)" } ?? "Paused \u{2014} window not active"
         default: depth.map { "Paused at d\($0)" } ?? "Paused"
         }
     }
@@ -101,7 +105,15 @@ struct EngineStrip: View {
     @ViewBuilder
     private var transport: some View {
         if app.engineEnabled, app.engine.isAvailable, !app.review.running, app.game.gameEnd(at: app.currentID) == nil {
-            if app.engine.pauseReason != nil {
+            if app.engine.pauseReason == .budget {
+                Button { app.engine.keepThinking() } label: {
+                    Label("Keep thinking", systemImage: "play.fill").font(.system(size: 11.5, weight: .medium))
+                }
+                .buttonStyle(.borderless).foregroundStyle(Theme.accent)
+                .help("Analyse this position for another \(EngineConfig.budgetLabel(settings.config.budgetSeconds).lowercased())")
+            } else if app.engine.pauseReason == .inactive {
+                EmptyView()
+            } else if app.engine.pauseReason != nil {
                 Button { app.engine.resume() } label: {
                     Label("Continue", systemImage: "play.fill").font(.system(size: 11.5, weight: .medium))
                 }
