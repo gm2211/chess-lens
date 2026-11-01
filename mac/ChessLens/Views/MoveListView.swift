@@ -12,8 +12,18 @@ private enum MoveToken {
 /// comments and side variations hanging off the move above it, or a review note on a critical moment.
 private enum MoveRow {
     case pair(number: Int, white: Int?, black: Int?)
-    case block(comment: String?, variations: [[MoveToken]])
+    case block(after: Int, comment: String?, variations: [[MoveToken]])
     case annotation(Int)
+
+    /// Stable across rebuilds (unlike the row's offset, which shifts when review notes are inserted),
+    /// so SwiftUI keeps each row's identity and doesn't rebuild the rows below an insertion.
+    var id: String {
+        switch self {
+        case .pair(let n, let w, let b): "p\(n).\(w ?? -1).\(b ?? -1)"
+        case .block(let after, _, _): "b\(after)"
+        case .annotation(let id): "a\(id)"
+        }
+    }
 }
 
 func displayComment(_ raw: String?) -> String? {
@@ -104,7 +114,7 @@ private func buildRows(_ g: Game, showSource: Bool, anchors: [Int: [Int]]) -> [M
         pending = nil
     }
 
-    if showSource, let c = displayComment(g.nodes[0].comment) { rows.append(.block(comment: c, variations: [])) }
+    if showSource, let c = displayComment(g.nodes[0].comment) { rows.append(.block(after: 0, comment: c, variations: [])) }
     var cur = 0
     while let next = g.nodes[cur].children.first {
         let pos = g.nodes[cur].position
@@ -123,7 +133,7 @@ private func buildRows(_ g: Game, showSource: Bool, anchors: [Int: [Int]]) -> [M
         let alts = !showSource ? [] : g.nodes[cur].children.dropFirst().map { variationTokens(g, parent: cur, node: $0) }
         if comment != nil || !alts.isEmpty {
             flush()
-            rows.append(.block(comment: comment, variations: alts))
+            rows.append(.block(after: next, comment: comment, variations: alts))
         }
         cur = next
     }
@@ -133,6 +143,12 @@ private func buildRows(_ g: Game, showSource: Bool, anchors: [Int: [Int]]) -> [M
 
 /// The annotated game: review summary and eval graph on top (after a review), then the move table with
 /// critical-moment notes under their moves, the result, and the lesson's exercises.
+///
+/// A plain VStack, not a LazyVStack: the review summary is a tall first child, so a lazy stack's size
+/// estimate for the unrealized rows swung by thousands of points as rows came and went, and every
+/// scroll to the current move re-measured and jumped (the sidebar flickered on each click). A game's
+/// table is at most a few hundred light rows, so laying it all out is cheap and gives exact geometry.
+/// The body doesn't read `currentID` (see `FollowCurrentMove`), so moving doesn't rebuild the rows.
 struct MoveListView: View {
     @Environment(AppModel.self) private var app
 
@@ -142,14 +158,12 @@ struct MoveListView: View {
         let rows = buildRows(app.game, showSource: app.showSourceAnalysis, anchors: anchors)
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
                     if reviewed {
                         ReviewSummarySection()
                         Divider().padding(.bottom, 6)
                     }
-                    ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
-                        rowView(row, index: i)
-                    }
+                    ForEach(rows, id: \.id) { row in rowView(row) }
                     if app.game.result != "*" {
                         Text(app.game.result)
                             .font(.mono(13)).foregroundStyle(Theme.ink3)
@@ -160,9 +174,7 @@ struct MoveListView: View {
                 }
                 .padding(.vertical, 6)
             }
-            .onChange(of: app.currentID) { _, id in
-                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("mv\(id)", anchor: .center) }
-            }
+            .background { FollowCurrentMove(proxy: proxy) }
         }
         .background(Theme.surface)
         .overlay {
@@ -176,7 +188,7 @@ struct MoveListView: View {
     }
 
     @ViewBuilder
-    private func rowView(_ row: MoveRow, index: Int) -> some View {
+    private func rowView(_ row: MoveRow) -> some View {
         switch row {
         case .pair(let number, let white, let black):
             HStack(spacing: 4) {
@@ -189,7 +201,7 @@ struct MoveListView: View {
             }
             .padding(.horizontal, 8).padding(.vertical, 1)
             .background(number % 2 == 0 ? Theme.surface2.opacity(0.45) : .clear)
-        case .block(let comment, let variations):
+        case .block(_, let comment, let variations):
             VStack(alignment: .leading, spacing: 4) {
                 if let comment {
                     Text(comment).font(.system(size: 12.5).italic()).foregroundStyle(Theme.ink2)
@@ -231,6 +243,21 @@ struct MoveListView: View {
         case .close:
             Text(")").font(.mono(12.5)).foregroundStyle(Theme.ink3).padding(.trailing, 2)
         }
+    }
+}
+
+/// Keeps the current move in view. Only this view reads `currentID`, so a move re-renders it and the
+/// move buttons, not the whole list. With no anchor, `scrollTo` scrolls the least amount needed and not
+/// at all when the move is already visible: clicking a move (or a chip in the summary) doesn't yank the list.
+private struct FollowCurrentMove: View {
+    @Environment(AppModel.self) private var app
+    let proxy: ScrollViewProxy
+
+    var body: some View {
+        Color.clear
+            .onChange(of: app.currentID) { _, id in
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("mv\(id)") }
+            }
     }
 }
 
