@@ -67,6 +67,7 @@ struct ImportSheet: View {
             case .pgn: PGNTab(openFile: { picker = .pgn }, close: { dismiss() })
             case .fen: FENTab(close: { dismiss() })
             case .screenshot: ScreenshotTab(chooseImage: { picker = .image }, close: { dismiss() })
+            case .setup: SetUpTab(close: { dismiss() })
             }
         }
         .padding(20)
@@ -325,28 +326,85 @@ private struct ScreenshotTab: View {
     }
 }
 
-// MARK: - Confirm
+// MARK: - Set Up
+
+private struct SetUpTab: View {
+    @Environment(AppModel.self) private var app
+    let close: () -> Void
+
+    var body: some View {
+        @Bindable var importer = app.importer
+        VStack(alignment: .leading, spacing: 14) {
+            if importer.setupDraft != nil {
+                PositionEditor(draft: Binding(get: { importer.setupDraft ?? ScreenshotDraft.empty() },
+                                              set: { importer.setupDraft = $0 }),
+                               close: close,
+                               reset: { importer.setupDraft = nil })
+            }
+        }
+        .onAppear { if app.importer.setupDraft == nil { app.importer.seedSetup(from: app.position, flipped: app.flipped) } }
+    }
+}
+
+// MARK: - Screenshot confirm
 
 struct ScreenshotConfirmView: View {
     @Environment(AppModel.self) private var app
     let close: () -> Void
 
+    var body: some View {
+        @Bindable var importer = app.importer
+        PositionEditor(draft: Binding(get: { importer.draft ?? ScreenshotDraft.empty() }, set: { importer.draft = $0 }),
+                       image: importer.shotImage,
+                       close: close,
+                       reset: { importer.shotState = .idle; importer.draft = nil },
+                       resetLabel: "Try another image")
+    }
+}
+
+// MARK: - Position editor
+
+/// Board editor shared by the screenshot confirmation and the manual Set Up tab.
+struct PositionEditor: View {
+    @Environment(AppModel.self) private var app
+    @Binding var draft: ScreenshotDraft
+    var image: NSImage? = nil
+    let close: () -> Void
+    let reset: () -> Void
+    var resetLabel: String? = nil
+
     private enum Tool: Hashable { case none, erase, piece(Piece) }
     @State private var tool: Tool = .none
     @State private var placementText = ""
 
-    private var draftBinding: Binding<ScreenshotDraft> {
-        Binding(get: { app.importer.draft ?? ScreenshotDraft(board: [Piece?](repeating: nil, count: 64), uncertain: [], sideToMove: .white, castling: [], blackAtBottom: false, confidence: 1) },
-                set: { app.importer.draft = $0 })
+    private func edit(_ change: (inout ScreenshotDraft) -> Void) {
+        var d = draft
+        change(&d)
+        d.castling.formIntersection(ScreenshotDraft.possibleCastling(d.board))
+        draft = d
+    }
+
+    private func tap(_ sq: Square) {
+        edit { d in
+            switch tool {
+            case .none: return
+            case .erase: d.board[sq] = nil
+            case .piece(let p): d.board[sq] = (d.board[sq] == p) ? nil : p
+            }
+            d.uncertain.remove(sq)
+        }
+    }
+
+    private func erase(_ sq: Square) {
+        edit { d in d.board[sq] = nil; d.uncertain.remove(sq) }
     }
 
     var body: some View {
-        let draft = draftBinding.wrappedValue
         let allowed = ScreenshotDraft.possibleCastling(draft.board)
         let validation: String? = { do { try draft.position.validate(); return nil } catch { return (error as? ChessError)?.errorDescription } }()
 
         VStack(alignment: .leading, spacing: 14) {
-            if app.importer.shotImage != nil {
+            if image != nil {
                 Notice(kind: draft.uncertain.isEmpty ? .info : .warn,
                        text: draft.uncertain.isEmpty
                        ? "Check the pieces against your image and fix anything that's off."
@@ -354,19 +412,10 @@ struct ScreenshotConfirmView: View {
             }
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
-                    MiniBoard(board: draft.board, flipped: draft.blackAtBottom, uncertain: draft.uncertain) { sq in
-                        var d = draftBinding.wrappedValue
-                        switch tool {
-                        case .none: return
-                        case .erase: d.board[sq] = nil
-                        case .piece(let p): d.board[sq] = p
-                        }
-                        d.uncertain.remove(sq)
-                        d.castling.formIntersection(ScreenshotDraft.possibleCastling(d.board))
-                        draftBinding.wrappedValue = d
-                    }
+                    MiniBoard(board: draft.board, flipped: draft.blackAtBottom, uncertain: draft.uncertain,
+                              onTap: { tap($0) }, onSecondaryTap: { erase($0) })
                     .frame(width: 250, height: 250)
-                    if let img = app.importer.shotImage {
+                    if let img = image {
                         Image(nsImage: img).resizable().scaledToFit().frame(maxWidth: 120, maxHeight: 90)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                             .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.line2, lineWidth: 1))
@@ -380,29 +429,32 @@ struct ScreenshotConfirmView: View {
                     }
                     HStack {
                         Text("Side to move").font(.system(size: 13)).foregroundStyle(Theme.ink3)
-                        Picker("Side to move", selection: Binding(get: { draft.sideToMove }, set: { draftBinding.wrappedValue.sideToMove = $0 })) {
+                        Picker("Side to move", selection: Binding(get: { draft.sideToMove }, set: { draft.sideToMove = $0 })) {
                             Text("White").tag(Side.white)
                             Text("Black").tag(Side.black)
                         }.pickerStyle(.segmented).labelsHidden().frame(width: 150)
                     }
                     HStack(spacing: 12) {
                         Text("Castling").font(.system(size: 13)).foregroundStyle(Theme.ink3)
-                        castle("K", .whiteKingside, allowed, draft)
-                        castle("Q", .whiteQueenside, allowed, draft)
-                        castle("k", .blackKingside, allowed, draft)
-                        castle("q", .blackQueenside, allowed, draft)
+                        castle("K", .whiteKingside, allowed)
+                        castle("Q", .whiteQueenside, allowed)
+                        castle("k", .blackKingside, allowed)
+                        castle("q", .blackQueenside, allowed)
                     }
-                    Toggle("Show board from Black's side", isOn: Binding(get: { draft.blackAtBottom }, set: { draftBinding.wrappedValue.blackAtBottom = $0 }))
+                    Toggle("Show board from Black's side", isOn: Binding(get: { draft.blackAtBottom }, set: { draft.blackAtBottom = $0 }))
                         .font(.system(size: 13))
-                    Button("Flip if wrong (rotate 180\u{00B0})") {
-                        var d = draftBinding.wrappedValue
-                        d.rotate180()
-                        d.castling.formIntersection(ScreenshotDraft.possibleCastling(d.board))
-                        draftBinding.wrappedValue = d
+                    HStack(spacing: 8) {
+                        Button("Starting position") { edit { $0.board = ScreenshotDraft.startingBoard; $0.uncertain = []; $0.castling = ScreenshotDraft.possibleCastling($0.board); $0.sideToMove = .white } }
+                        Button("Clear board") { edit { $0.board = ScreenshotDraft.emptyBoard; $0.uncertain = []; $0.castling = [] } }
+                    }.buttonStyle(QuietButtonStyle())
+                    Button(image != nil ? "Flip if wrong (rotate 180\u{00B0})" : "Rotate board 180\u{00B0}") {
+                        edit { $0.rotate180() }
                     }.buttonStyle(QuietButtonStyle())
                 }
             }
-            Text("Pick a piece, then click squares to fix mistakes.").font(.system(size: 13)).foregroundStyle(Theme.ink3)
+            Text(image != nil ? "Pick a piece, then click squares to fix mistakes."
+                              : "Pick a piece, then click squares to place it. Click it again or right-click to remove.")
+                .font(.system(size: 13)).foregroundStyle(Theme.ink3)
             palette
             if let validation { Notice(kind: .error, text: validation + ".") }
             HStack {
@@ -413,8 +465,9 @@ struct ScreenshotConfirmView: View {
                 }
                 .buttonStyle(PrimaryButtonStyle()).disabled(validation != nil)
                 .keyboardShortcut(.defaultAction)
-                Button("Try another image") { app.importer.shotState = .idle; app.importer.draft = nil }
-                    .buttonStyle(QuietButtonStyle())
+                if let resetLabel {
+                    Button(resetLabel, action: reset).buttonStyle(QuietButtonStyle())
+                }
             }
         }
         .onAppear { placementText = draft.placement }
@@ -423,17 +476,17 @@ struct ScreenshotConfirmView: View {
             placementText = new
         }
         .onChange(of: placementText) { _, text in
-            var d = draftBinding.wrappedValue
-            if d.setPlacement(text), d.board != draftBinding.wrappedValue.board {
+            var d = draft
+            if d.setPlacement(text), d.board != draft.board {
                 d.castling.formIntersection(ScreenshotDraft.possibleCastling(d.board))
-                draftBinding.wrappedValue = d
+                draft = d
             }
         }
     }
 
-    private func castle(_ label: String, _ flag: CastlingRights, _ allowed: CastlingRights, _ draft: ScreenshotDraft) -> some View {
+    private func castle(_ label: String, _ flag: CastlingRights, _ allowed: CastlingRights) -> some View {
         Toggle(label, isOn: Binding(get: { draft.castling.contains(flag) }, set: { on in
-            if on { draftBinding.wrappedValue.castling.insert(flag) } else { draftBinding.wrappedValue.castling.remove(flag) }
+            if on { draft.castling.insert(flag) } else { draft.castling.remove(flag) }
         }))
         .toggleStyle(.checkbox).font(.system(size: 13)).disabled(!allowed.contains(flag))
     }

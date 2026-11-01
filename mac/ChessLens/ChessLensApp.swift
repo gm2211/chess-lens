@@ -48,6 +48,7 @@ struct AppCommands: Commands {
             Button("New Game") { model.newGame() }.keyboardShortcut("n")
             Button("Open PGN\u{2026}") { model.showFileImporter = true }.keyboardShortcut("o")
             Button("Import\u{2026}") { model.openImporter() }.keyboardShortcut("i", modifiers: [.command, .shift])
+            Button("Set Up Position\u{2026}") { model.openSetup() }.keyboardShortcut("e", modifiers: [.command, .shift])
         }
         CommandGroup(after: .pasteboard) {
             Divider()

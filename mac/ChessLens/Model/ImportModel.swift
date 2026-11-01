@@ -5,7 +5,7 @@ import ChessCore
 import BoardVision
 
 enum ImportTab: String, CaseIterable, Identifiable {
-    case pgn = "PGN", fen = "FEN", screenshot = "Screenshot"
+    case pgn = "PGN", fen = "FEN", screenshot = "Screenshot", setup = "Set Up"
     var id: String { rawValue }
 }
 
@@ -65,6 +65,20 @@ struct ScreenshotDraft {
         blackAtBottom.toggle()
     }
 
+    static let emptyBoard = [Piece?](repeating: nil, count: 64)
+    static var startingBoard: [Piece?] { ((try? Position(fen: Position.startFEN))?.board ?? emptyBoard) }
+
+    static func empty() -> ScreenshotDraft {
+        ScreenshotDraft(board: emptyBoard, uncertain: [], sideToMove: .white, castling: [], blackAtBottom: false, confidence: 1)
+    }
+
+    /// Editable draft seeded from an existing position.
+    static func from(_ p: Position, flipped: Bool) -> ScreenshotDraft {
+        ScreenshotDraft(board: p.board, uncertain: [], sideToMove: p.turn,
+                        castling: p.castling.intersection(possibleCastling(p.board)),
+                        blackAtBottom: flipped, confidence: 1)
+    }
+
     /// Castling rights the piece placement allows.
     static func possibleCastling(_ board: [Piece?]) -> CastlingRights {
         var r: CastlingRights = []
@@ -99,6 +113,13 @@ final class ImportModel {
     // FEN
     var fenText = ""
 
+    // Set Up (manual editor, seeded from the current board)
+    var setupDraft: ScreenshotDraft?
+
+    func seedSetup(from position: Position, flipped: Bool) {
+        setupDraft = .from(position, flipped: flipped)
+    }
+
     // Screenshot
     enum ShotState { case idle, working, failed(String), confirm }
     var shotState: ShotState = .idle
@@ -111,7 +132,7 @@ final class ImportModel {
     func reset() {
         pgnText = ""; fenText = ""; games = []; selectedGame = 0
         cancelScreenshot()
-        shotState = .idle; shotImage = nil; draft = nil
+        shotState = .idle; shotImage = nil; draft = nil; setupDraft = nil
     }
 
     private func reparsePGN() {
@@ -211,8 +232,7 @@ final class ImportModel {
     }
 
     func startManualDraft() {
-        let board = [Piece?](repeating: nil, count: 64)
-        draft = ScreenshotDraft(board: board, uncertain: [], sideToMove: .white, castling: [], blackAtBottom: false, confidence: 1)
+        draft = .empty()
         shotState = .confirm
     }
 }
