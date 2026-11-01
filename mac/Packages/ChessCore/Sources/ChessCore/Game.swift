@@ -138,6 +138,24 @@ public struct Game: Sendable, Equatable {
         return (before - nodes.count, remap)
     }
 
+    /// How many moves `clearSideLines()` would remove: every branch off the main line, with what follows it.
+    public var sideLineCount: Int {
+        mainline().reduce(0) { acc, id in acc + nodes[id].children.dropFirst().reduce(0) { $0 + subtreeSize($1) } }
+    }
+
+    /// Removes every subtree whose root is not on the main line (first-child chain from the root), whether it
+    /// was explored or imported. The main line stays whole, trailing moves included. Ids are rebuilt; returns
+    /// how many moves went and where each survivor's id moved (old -> new).
+    @discardableResult
+    public mutating func clearSideLines() -> (removed: Int, remap: [Int: Int]) {
+        let before = nodes.count
+        for id in mainline() where nodes[id].children.count > 1 {
+            nodes[id].children = [nodes[id].children[0]]
+        }
+        let remap = compact()
+        return (before - nodes.count, remap)
+    }
+
     /// The explored flags in a persisted form: one "0"/"1" per move, depth-first in children order (the order
     /// PGN export writes and parsing rebuilds), root excluded.
     public var exploredSignature: String {

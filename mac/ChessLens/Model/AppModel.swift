@@ -60,6 +60,7 @@ final class AppModel {
     var pendingImport: PendingImport?                // a drop waiting for confirmation
     @ObservationIgnored var pendingTask: Task<Void, Never>?
     private(set) var toastText: String?
+    var confirmClearSideLines = false               // the alert before removing every branch off the main line
     var confirmClearExplored = false                 // the alert before clearing a lot of moves
     var playSession: PlaySession?                    // "Continue against engine", see AppModel+Play
     var showPlaySetup = false
@@ -296,6 +297,35 @@ final class AppModel {
         currentID = newCurrent
         didMove()
         showToast("Cleared \(removed) explored move\(removed == 1 ? "" : "s")")
+    }
+
+    /// How many moves "Clear All Side Lines" would remove.
+    var sideLineCount: Int { game.sideLineCount }
+
+    /// Always asks first: side lines can include variations that came with the imported game.
+    func requestClearSideLines() {
+        guard sideLineCount > 0 else { return }
+        confirmClearSideLines = true
+    }
+
+    /// Removes every branch off the main game line. The current move moves to the nearest surviving ancestor
+    /// (so it ends up on the main line); ids change, so everything keyed by them resets.
+    func clearSideLines() {
+        guard game.sideLineCount > 0 else { return }
+        endPlay()
+        let ancestors = game.path(to: currentID)
+        let (removed, remap) = game.clearSideLines()
+        guard removed > 0 else { return }
+        let survivor = ancestors.reversed().first { remap[$0] != nil } ?? 0
+        let newCurrent = remap[survivor] ?? 0
+        lineTip = game.mainline().last ?? 0
+        layoutCache = [:]
+        review.reset()
+        ask.reset()
+        lessonFocus = nil; lessonPlayer = nil
+        currentID = newCurrent
+        didMove()
+        showToast("Removed \(removed) side-line move\(removed == 1 ? "" : "s")")
     }
 
     // MARK: Loading
