@@ -131,7 +131,7 @@ private struct SummaryHero: View {
         case .loading?:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Writing your lesson\u{2026}").font(.system(size: 13)).foregroundStyle(Theme.ink3)
+                Text(ai.switchNote ?? "Writing your lesson\u{2026}").font(.system(size: 13)).foregroundStyle(Theme.ink3)
             }
             VStack(alignment: .leading, spacing: 7) {
                 ForEach([0.9, 1.0, 0.75, 0.55], id: \.self) { w in
@@ -144,19 +144,18 @@ private struct SummaryHero: View {
         case .needsSignIn?:
             setupHint
         case .failed(let m)?:
-            HStack(spacing: 8) {
-                Text(m).font(.system(size: 12.5)).foregroundStyle(Theme.blund).lineLimit(2).truncationMode(.tail)
-                Spacer(minLength: 4)
-                Button("Retry") { ai.generate(game: app.game, review: app.review) }.buttonStyle(QuietButtonStyle())
-            }
+            AIFailureView(message: m) { ai.generate(game: app.game, review: app.review) }
         case .done(let g, let unverified)?:
             lesson(g, unverified: unverified, ai: ai)
         }
     }
 
     private var setupHint: some View {
-        Text("Set up AI in the header to get a lesson from this game: the ideas behind the key moments, habits to build and exercises.")
-            .font(.system(size: 12.5)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Not signed in to \(AIHub.shared.selected.displayName). Sign in from the AI chip in the header to get a lesson from this game: the ideas behind the key moments, habits to build and exercises.")
+                .font(.system(size: 12.5)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true)
+            if !AIHub.shared.otherReadyProviders.isEmpty { SwitchModelMenu() }
+        }
     }
 
     @ViewBuilder private func lesson(_ g: GameLesson, unverified: [String], ai: AISummary) -> some View {

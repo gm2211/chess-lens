@@ -36,12 +36,15 @@ final class AskAI {
     private(set) var status: Status = .idle
     /// The answer as it streams in, while `status` is `.thinking`.
     private(set) var partial: String?
+    /// "Switched to Grok \u{2014} asking again\u{2026}" while a question restarts after a model switch.
+    private(set) var switchNote: String?
     var isOpen = false
     var draft = ""
 
     @ObservationIgnored private var turns: [AskPrompt.Turn] = []
     @ObservationIgnored private var known = Set<String>()
     @ObservationIgnored private var askedAt: Int?
+    var askedNode: Int? { askedAt }
     @ObservationIgnored private var lastQuestion: String?
     @ObservationIgnored private var task: Task<Void, Never>?
     private let hub: AIHub
@@ -62,7 +65,7 @@ final class AskAI {
         task?.cancel(); task = nil
         messages = []; turns = []; known = []
         askedAt = nil; lastQuestion = nil
-        status = .idle; partial = nil
+        status = .idle; partial = nil; switchNote = nil
     }
 
     func close() {
@@ -79,6 +82,21 @@ final class AskAI {
             if draft.isEmpty { draft = messages.last?.text ?? "" }
             messages.removeLast()
         }
+    }
+
+    /// The provider or model changed while a question was in flight or had failed: ask it again with the new one.
+    func providerChanged(game: Game, review: ReviewModel, live: AskPrompt.EngineReport? = nil) {
+        guard let q = lastQuestion, let node = askedAt, game.nodes.indices.contains(node) else { return }
+        switch status {
+        case .thinking, .failed, .needsSignIn: break
+        case .idle: return
+        }
+        task?.cancel(); task = nil
+        partial = nil
+        if case .user? = messages.last?.kind { messages.removeLast() }
+        status = .idle
+        ask(q, game: game, review: review, node: node, live: live)
+        switchNote = "Switched to \(hub.selected.displayName) \u{2014} asking again\u{2026}"
     }
 
     /// Asks again after a failure.
@@ -98,7 +116,7 @@ final class AskAI {
         }
         messages.append(AskMessage(kind: .user, text: q))
         draft = ""
-        status = .thinking; partial = nil
+        status = .thinking; partial = nil; switchNote = nil
         askedAt = id; lastQuestion = q
         let turnsSoFar = turns
         let noted = AskPrompt.illegalMoveNotes(question: q, subject: ctx.subject).flatMap(\.sans)
@@ -138,21 +156,21 @@ final class AskAI {
             messages.append(AskMessage(kind: .assistant(unverified: answer.unsupported, conflict: conflict), text: answer.text))
             self.turns.append(AskPrompt.Turn(context: ctx.label, question: q, answer: answer.text))
             known.formUnion(answer.allowed)
-            status = .idle; partial = nil; task = nil
-        } catch is CancellationError {
-            // `cancel()` already put things back.
-        } catch LLMError.canceled {
-        } catch let e as LLMError where e.needsSignIn {
-            fail(.needsSignIn)
-            await hub.refresh(hub.selected)
+            status = .idle; partial = nil; task = nil; switchNote = nil
         } catch {
-            if Task.isCancelled { return }
-            fail(.failed(error.localizedDescription))
+            // A cancelled run leaves things to whoever cancelled it (`cancel()` or a restart).
+            if Task.isCancelled || error is CancellationError || (error as? LLMError) == .canceled { return }
+            if let e = error as? LLMError, e.needsSignIn {
+                fail(.needsSignIn)
+                await hub.refresh(hub.selected)
+            } else {
+                fail(.failed(hub.failureText(for: error)))
+            }
         }
     }
 
     private func fail(_ s: Status) {
-        status = s; partial = nil; task = nil
+        status = s; partial = nil; task = nil; switchNote = nil
     }
 
     private func attempt(_ q: String, _ ctx: Context, _ turns: [AskPrompt.Turn], _ allowed: Set<String>,
@@ -160,7 +178,7 @@ final class AskAI {
         try await AIToolLoop.run(hub: hub, system: AskPrompt.system(tool: tool, compact: compact),
                                  prompt: AskPrompt.user(ctx.subject, turns: turns, question: q, compact: compact),
                                  maxTokens: 500, allowed: allowed, tool: tool,
-                                 seed: tool ? Self.namedMoveChecks(q, ctx.subject) : [], note: note,
+                                 seed: tool ? Self.namedMoveChecks(q, ctx.subject) : [], note: note, timeout: .ask,
                                  onPartial: { [weak self] text in if self?.status == .thinking { self?.partial = text } })
     }
 

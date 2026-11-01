@@ -87,6 +87,7 @@ final class AppModel {
         layoutCache = [:]
         engine.onSettingsApplied = { [weak self] in self?.refreshEngine() }
         refreshEngine()
+        AIHub.shared.onSelectionChange = { [weak self] in self?.aiSelectionChanged() }
     }
 
     // MARK: Derived
