@@ -163,6 +163,7 @@ private struct SummaryHero: View {
         if let h = g.headline {
             Text(h).font(.display(21)).foregroundStyle(Theme.ink).fixedSize(horizontal: false, vertical: true)
         }
+        PlayFullReviewButton(lesson: g, ai: ai)
         if !g.concepts.isEmpty {
             VStack(alignment: .leading, spacing: 9) {
                 SectionLabel("What this game teaches")
@@ -280,6 +281,39 @@ private struct PlayLessonButton: View {
         .help(app.canPlayLessons ? "Walk through this idea on the board, narrated (\(steps.count) steps)"
               : "Lessons are paused while you play the engine")
         .accessibilityLabel(active ? "Stop the lesson on \(title)" : "Play the lesson on \(title)")
+    }
+}
+
+/// "Play full review": the whole lesson as one narrated playlist (intro, every concept in game order, the
+/// turning point, the habits to build). See `LessonPlaylist`.
+private struct PlayFullReviewButton: View {
+    @Environment(AppModel.self) private var app
+    let lesson: GameLesson
+    let ai: AISummary
+
+    var body: some View {
+        let steps = LessonPlaylist.build(lesson: lesson, line: ai.lessonLine).compactMap { ps in
+            ai.node(forStep: ps.step).map { LessonPlayer.Step(step: ps.step, nodeID: $0, concept: ps.concept) }
+        }
+        let active = app.lessonPlayer?.isFullReview == true
+        if steps.count > 1 {
+            Button { app.playLesson(title: "Full review", steps: steps, fullReview: true) } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: active ? "stop.fill" : "play.fill").font(.system(size: 11, weight: .bold))
+                    Text(active ? "Stop full review" : "Play full review").font(.system(size: 13.5, weight: .semibold))
+                    Text("\(steps.count) steps").font(.system(size: 11.5)).opacity(0.8)
+                }
+                .foregroundStyle(active ? Theme.surface : Theme.lesson)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(active ? Theme.lesson : Theme.lesson.opacity(0.13), in: RoundedRectangle(cornerRadius: 5))
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.lesson.opacity(active ? 1 : 0.6), lineWidth: 1))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!app.canPlayLessons)
+            .help(app.canPlayLessons ? "Walk through the whole review on the board, narrated" : "Lessons are paused while you play the engine")
+            .accessibilityLabel(active ? "Stop the full review" : "Play the full review")
+        }
     }
 }
 

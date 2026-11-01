@@ -194,7 +194,6 @@ struct BoardColumn: View {
             NavigationRow()
             if let session = app.playSession { PlayBanner(session: session) }
             if let p = app.lessonPlayer, !app.hidesEvaluation { LessonPlayerBar(player: p) } else { LessonCaption() }
-            CoachBar()
         }
         .padding(.horizontal, 18)
         .padding(.top, 14)
@@ -283,42 +282,5 @@ struct LessonCaption: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: app.lessonFocus)
-    }
-}
-
-/// Banner shown only for notable states (check, mate, draws). Nothing otherwise.
-private struct CoachBar: View {
-    @Environment(AppModel.self) private var app
-
-    var body: some View {
-        Group {
-            if let text = message {
-                HStack(spacing: 10) {
-                    Text(text).font(.system(size: 14)).foregroundStyle(Theme.ink2)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .frame(minHeight: 44)
-                .frame(maxWidth: 520 + 36, alignment: .leading)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.line, lineWidth: 1))
-                .overlay(alignment: .leading) { Rectangle().fill(Theme.line2).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 1.5)) }
-                .transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.15), value: message)
-    }
-
-    private var message: AttributedString? {
-        let pos = app.position
-        let mover = pos.turn == .white ? "White" : "Black"
-        switch app.game.gameEnd(at: app.currentID) {
-        case .checkmate(let w)?: return try? AttributedString(markdown: "Checkmate \u{2014} **\(w == .white ? "White" : "Black")** wins")
-        case .stalemate?: return AttributedString("Stalemate \u{2014} the game is drawn")
-        case let end?: return AttributedString(end.title)
-        case nil: break
-        }
-        if pos.isCheck { return try? AttributedString(markdown: "**\(mover)** is in check") }
-        return nil
     }
 }

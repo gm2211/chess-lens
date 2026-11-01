@@ -8,11 +8,11 @@ extension AppModel {
 
     /// Starts playing `steps` (story steps with the node of the position each shows); playing the same concept
     /// again while it is open stops it.
-    func playLesson(title: String, steps: [LessonPlayer.Step]) {
+    func playLesson(title: String, steps: [LessonPlayer.Step], fullReview: Bool = false) {
         if let p = lessonPlayer, p.title == title { closeLesson(); return }
         guard canPlayLessons, !steps.isEmpty else { return }
         clearLessonFocus()
-        let p = LessonPlayer(title: title, steps: steps, app: self)
+        let p = LessonPlayer(title: title, steps: steps, app: self, isFullReview: fullReview)
         lessonPlayer = p
         p.start()
     }

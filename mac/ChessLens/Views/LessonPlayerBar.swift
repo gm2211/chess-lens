@@ -12,11 +12,19 @@ struct LessonPlayerBar: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "graduationcap.fill").font(.system(size: 10.5, weight: .semibold))
-                Text(player.title.uppercased()).font(.system(size: 11, weight: .semibold)).tracking(0.7).lineLimit(1)
+                Text(player.isFullReview ? "FULL REVIEW" : player.title.uppercased())
+                    .font(.system(size: 11, weight: .semibold)).tracking(0.7).lineLimit(1)
+                if player.isFullReview, let concept = step.concept {
+                    Text(concept).font(.system(size: 11, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Theme.lesson.opacity(0.14), in: RoundedRectangle(cornerRadius: 3))
+                        .id(concept)
+                        .transition(.opacity)
+                }
                 Text(step.step.isStart ? "Start" : moveLabel(app.game, step.nodeID))
                     .font(.mono(11, weight: .semibold)).foregroundStyle(Theme.ink3)
                 Spacer(minLength: 6)
-                Text("\(player.index + 1) / \(player.steps.count)").font(.system(size: 11, weight: .medium).monospacedDigit())
+                Text(player.isFullReview ? "Step \(player.index + 1)/\(player.steps.count)" : "\(player.index + 1) / \(player.steps.count)").font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(Theme.ink3)
                 closeButton
             }
@@ -50,7 +58,7 @@ struct LessonPlayerBar: View {
         .overlay(alignment: .leading) { Rectangle().fill(Theme.lesson).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 1.5)) }
         .animation(.easeOut(duration: 0.2), value: player.index)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Lesson: \(player.title), step \(player.index + 1) of \(player.steps.count)")
+        .accessibilityLabel("\(player.isFullReview ? "Full review" : "Lesson: \(player.title)"), \(step.concept.map { $0 + ", " } ?? "")step \(player.index + 1) of \(player.steps.count)")
     }
 
     /// "Instead: 12. O-O-O Rd8 13. Rxd7", the moves already shown in the lesson colour.
