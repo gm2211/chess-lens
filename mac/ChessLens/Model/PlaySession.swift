@@ -191,7 +191,7 @@ final class PlaySession {
             var best: String?
             // One retry on a fresh engine process if the first search never answers.
             for attempt in 1...2 {
-                let (move, stalled) = try await bestMove(position)
+                let (move, stalled) = try await bestMove(position, history: app.game.engineHistory(to: from))
                 if Task.isCancelled { return }
                 best = move
                 if move != nil || !stalled { break }
@@ -219,7 +219,7 @@ final class PlaySession {
 
     /// One search for `position`, watched: past the move time plus `watchdogMargin` the engine process is restarted,
     /// which ends the wait. `stalled` says the watchdog fired.
-    private func bestMove(_ position: Position) async throws -> (move: String?, stalled: Bool) {
+    private func bestMove(_ position: Position, history: (rootFEN: String, moves: [String])) async throws -> (move: String?, stalled: Bool) {
         let engine = engine
         let moveTime = setup.moveTime
         let watchdog = Task { () -> Bool in
@@ -234,7 +234,7 @@ final class PlaySession {
                 await engine.setUCIOptions(setup.strength.uciOptions)
                 prepared = true
             }
-            let stream = try await engine.search(fen: position.fen, limit: .moveTime(moveTime), multiPV: 1)
+            let stream = try await engine.search(fen: history.rootFEN, moves: history.moves, limit: .moveTime(moveTime), multiPV: 1)
             for await event in stream {
                 if case .finished(let move, let completed) = event, completed { best = move }
             }

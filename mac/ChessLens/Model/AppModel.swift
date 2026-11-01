@@ -119,10 +119,11 @@ final class AppModel {
     }
 
     var terminalEval: Eval? {
-        let p = position
-        if p.isCheckmate { return .checkmate(winner: p.turn.opposite) }
-        if p.isStalemate || p.isInsufficientMaterial { return .cp(0) }
-        return nil
+        switch game.gameEnd(at: currentID) {
+        case .checkmate(let w)?: return .checkmate(winner: w)
+        case _?: return .cp(0)
+        case nil: return nil
+        }
     }
 
     // MARK: Navigation
@@ -266,7 +267,9 @@ final class AppModel {
 
     func refreshEngine() {
         guard !review.running else { return }
-        if engineEnabled && !hidesEvaluation { engine.analyze(position) } else { engine.stopLive() }
+        if game.gameEnd(at: currentID) != nil { engine.markGameOver(position) }
+        else if engineEnabled && !hidesEvaluation { engine.analyze(position, history: game.engineHistory(to: currentID)) }
+        else { engine.stopLive() }
     }
 
     func startReview() {

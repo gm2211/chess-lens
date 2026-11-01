@@ -289,8 +289,13 @@ actor UCIEngine {
         send("stop")
     }
 
+    /// `position fen <fen>` plus the moves played since, so the engine can see repetitions.
+    static func positionCommand(fen: String, moves: [String]) -> String {
+        moves.isEmpty ? "position fen \(fen)" : "position fen \(fen) moves \(moves.joined(separator: " "))"
+    }
+
     /// Starts a search, first stopping (and draining) any previous one.
-    func search(fen: String, limit: SearchLimit, multiPV: Int) async throws -> AsyncStream<EngineEvent> {
+    func search(fen: String, moves: [String] = [], limit: SearchLimit, multiPV: Int) async throws -> AsyncStream<EngineEvent> {
         try await start()
         if dead { throw EngineError.terminated }
         ticket += 1
@@ -316,7 +321,7 @@ actor UCIEngine {
             Task { await self?.cancelIfActive(id) }
         }
         active = Active(id: id, continuation: continuation, limit: limit)
-        send("position fen \(fen)")
+        send(UCIEngine.positionCommand(fen: fen, moves: moves))
         switch limit {
         case .infinite: send("go infinite")
         case .depth(let d): send("go depth \(d)")
