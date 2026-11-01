@@ -30,20 +30,23 @@ struct ReviewSummarySection: View {
             if !collapsed {
                 if !review.running { SummaryHero() }
                 let phases = review.phaseSummary(game: app.game)
-                HStack(alignment: .top, spacing: 10) {
-                    SummaryCard(name: "White", dark: false, s: s.white, phases: phases[.white] ?? [:])
-                    SummaryCard(name: "Black", dark: true, s: s.black, phases: phases[.black] ?? [:])
-                }
+                // Side by side while both cards fit, stacked when the panel is narrow.
+                SideBySideOrStacked { cards(s, phases) }
             }
-            EvalGraph()
             HStack(spacing: 8) {
                 Text(momentsText(moments.count, running: review.running))
-                    .font(.system(size: 12.5)).foregroundStyle(Theme.ink3)
+                    .font(.system(size: 12.5)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 6)
                 if AIHub.shared.isReady { ExplainAllButton(ids: moments) }
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
+    }
+
+    @ViewBuilder private func cards(_ s: (white: SideSummary, black: SideSummary),
+                                    _ phases: [Side: [GamePhase: PhaseStat]]) -> some View {
+        SummaryCard(name: "White", dark: false, s: s.white, phases: phases[.white] ?? [:])
+        SummaryCard(name: "Black", dark: true, s: s.black, phases: phases[.black] ?? [:])
     }
 
     private func accuracyLine(_ s: (white: SideSummary, black: SideSummary)) -> String {
@@ -392,7 +395,7 @@ private struct ExercisesSection: View {
     }
 }
 
-private struct SummaryCard: View {
+struct SummaryCard: View {
     let name: String
     let dark: Bool
     let s: SideSummary
@@ -407,11 +410,11 @@ private struct SummaryCard: View {
                     .overlay(Circle().stroke(Theme.ink2, lineWidth: 1.5)).frame(width: 12, height: 12)
                 Text(name.uppercased()).font(.system(size: 11.5, weight: .semibold)).tracking(0.7).foregroundStyle(Theme.ink3)
             }
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(s.accuracy.map { "\(Int($0.rounded()))" } ?? "\u{2013}").font(.display(36))
-                if s.accuracy != nil { Text("% accuracy").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink3) }
+            ViewThatFits(in: .horizontal) {
+                accuracyRow(s, label: "% accuracy")
+                accuracyRow(s, label: "%")
             }
-            HStack(spacing: 6) {
+            FlowLayout(spacing: 6, lineSpacing: 3) {
                 ForEach(shown, id: \.self) { ClassCount(cls: $0, count: s.count($0)) }
                 if errors == 0 && s.moves > 0 {
                     HStack(spacing: 3) {
@@ -421,10 +424,10 @@ private struct SummaryCard: View {
                     .help("No inaccuracies, mistakes or blunders")
                 }
             }
-            .lineLimit(1)
-            .frame(height: 18)
+            .frame(minHeight: 18)
             if !phases.isEmpty {
-                HStack(spacing: 4) {
+                // Chips wrap to a second line rather than widening the card.
+                FlowLayout(spacing: 4, lineSpacing: 4) {
                     ForEach(GamePhase.allCases, id: \.self) { ph in
                         if let st = phases[ph], st.accuracy != nil { PhaseChip(phase: ph, stat: st) }
                     }
@@ -435,6 +438,86 @@ private struct SummaryCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 5))
         .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.line, lineWidth: 1))
+    }
+}
+
+/// Two cards in a row when each gets at least `minCard` points, otherwise one above the other.
+/// Sized from the width it is offered, so the pair can never be wider than the panel.
+private struct SideBySideOrStacked: Layout {
+    var minCard: CGFloat = 170
+    var gap: CGFloat = 10
+
+    private func sideBySide(_ w: CGFloat) -> Bool { w >= minCard * 2 + gap }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let w = proposal.width ?? minCard * 2 + gap
+        if sideBySide(w) {
+            let cw = (w - gap) / 2
+            let h = subviews.map { $0.sizeThatFits(ProposedViewSize(width: cw, height: nil)).height }.max() ?? 0
+            return CGSize(width: w, height: h)
+        }
+        let hs = subviews.map { $0.sizeThatFits(ProposedViewSize(width: w, height: nil)).height }
+        return CGSize(width: w, height: hs.reduce(0, +) + gap * CGFloat(max(0, hs.count - 1)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        if sideBySide(bounds.width) {
+            let cw = (bounds.width - gap) / 2
+            let h = subviews.map { $0.sizeThatFits(ProposedViewSize(width: cw, height: nil)).height }.max() ?? 0
+            for (i, v) in subviews.enumerated() {
+                v.place(at: CGPoint(x: bounds.minX + CGFloat(i) * (cw + gap), y: bounds.minY), anchor: .topLeading,
+                        proposal: ProposedViewSize(width: cw, height: h))
+            }
+        } else {
+            var y = bounds.minY
+            for v in subviews {
+                let h = v.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil)).height
+                v.place(at: CGPoint(x: bounds.minX, y: y), anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: h))
+                y += h + gap
+            }
+        }
+    }
+}
+
+extension SummaryCard {
+    fileprivate func accuracyRow(_ s: SideSummary, label: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text(s.accuracy.map { "\(Int($0.rounded()))" } ?? "\u{2013}").font(.display(36)).lineLimit(1)
+            if s.accuracy != nil { Text(label).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink3).lineLimit(1) }
+        }
+    }
+}
+
+/// A phase chip's hover label, handed up to the inspector root so no card, scroll view or sibling draws over it.
+struct PhaseTip: Equatable { var text: String; var anchor: Anchor<CGRect> }
+struct PhaseTipKey: PreferenceKey {
+    static let defaultValue: [PhaseTip] = []
+    static func reduce(value: inout [PhaseTip], nextValue: () -> [PhaseTip]) { value += nextValue() }
+}
+
+extension View {
+    /// Draws the phase chips' hover label above everything in this view, clamped inside its bounds.
+    func phaseTipHost() -> some View {
+        overlayPreferenceValue(PhaseTipKey.self) { tips in
+            GeometryReader { geo in
+                if let tip = tips.first {
+                    let r = geo[tip.anchor]
+                    let edge: CGFloat = 6
+                    let leftHalf = r.midX < geo.size.width / 2
+                    let x0 = leftHalf ? max(edge, r.minX) : edge
+                    let w = leftHalf ? geo.size.width - edge - x0 : max(40, min(geo.size.width - edge, r.maxX) - edge)
+                    let above = r.minY >= 34
+                    Text(tip.text)
+                        .font(.system(size: 11)).foregroundStyle(Theme.surface)
+                        .padding(.horizontal, 7).padding(.vertical, 4)
+                        .background(Theme.ink, in: RoundedRectangle(cornerRadius: 4))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: w, alignment: leftHalf ? .leading : .trailing)
+                        .offset(x: x0, y: above ? r.minY - 30 : r.maxY + 4)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
     }
 }
 
@@ -456,20 +539,7 @@ private struct PhaseChip: View {
         .padding(.horizontal, 6).padding(.vertical, 3)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 3))
         .overlay(RoundedRectangle(cornerRadius: 3).stroke(hovering ? Theme.line2 : Theme.line, lineWidth: 1))
-        .overlay(alignment: .top) {
-            if showTip {
-                Text(help(acc))
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.surface)
-                    .padding(.horizontal, 7).padding(.vertical, 4)
-                    .background(Theme.ink, in: RoundedRectangle(cornerRadius: 4))
-                    .fixedSize()
-                    .offset(y: -28)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
-            }
-        }
-        .zIndex(showTip ? 1 : 0)
+        .anchorPreference(key: PhaseTipKey.self, value: .bounds) { showTip ? [PhaseTip(text: help(acc), anchor: $0)] : [] }
         .onHover { inside in
             hovering = inside
             if inside {
@@ -520,7 +590,24 @@ private struct PhaseMarker: View {
     }
 }
 
+/// The eval graph, pinned above the scrolling summary and move list so clicking it never scrolls it away.
+struct PinnedEvalGraph: View {
+    @Environment(AppModel.self) private var app
+    @AppStorage("evalGraphCollapsed") private var collapsed = false
+
+    var body: some View {
+        if app.review.hasResults && !app.hidesEvaluation {
+            VStack(spacing: 0) {
+                EvalGraph(collapsed: $collapsed).padding(.horizontal, 14).padding(.vertical, 8)
+                Divider()
+            }
+            .background(Theme.surface)
+        }
+    }
+}
+
 private struct EvalGraph: View {
+    @Binding var collapsed: Bool
     @Environment(AppModel.self) private var app
     @State private var hoverIndex: Int?
 
@@ -545,14 +632,23 @@ private struct EvalGraph: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             header
-            chart
-            legend
+            if !collapsed {
+                chart
+                legend
+            }
         }
     }
 
     /// "Winning chances" and the (?) explaining what the line and the dots mean.
     private var header: some View {
         HStack(spacing: 5) {
+            Button { withAnimation(.easeOut(duration: 0.15)) { collapsed.toggle() } } label: {
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.ink3)
+                    .rotationEffect(.degrees(collapsed ? 0 : 90)).frame(width: 12, height: 14).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(collapsed ? "Show the graph" : "Hide the graph")
+            .accessibilityLabel(collapsed ? "Show the evaluation graph" : "Hide the evaluation graph")
             Text("WINNING CHANCES").font(.system(size: 10.5, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.ink3)
             Button { showInfo.toggle() } label: {
                 Image(systemName: "questionmark.circle").font(.system(size: 11.5)).foregroundStyle(Theme.ink3)
@@ -577,15 +673,25 @@ private struct EvalGraph: View {
 
     /// "○ Morphy  ● Duke of Brunswick… · yellow inaccuracy · orange mistake · red blunder"
     private var legend: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 3) { Self.marker(cls: nil, side: .white); Text(Self.shortName(app.game.header("White"), "White")) }
-            HStack(spacing: 3) { Self.marker(cls: nil, side: .black); Text(Self.shortName(app.game.header("Black"), "Black")) }
-            Text("\u{00B7}").foregroundStyle(Theme.ink3)
+        FlowLayout(spacing: 8, lineSpacing: 2) {
+            playerKey(.white, "White")
+            playerKey(.black, "Black")
             ForEach([MoveClass.inaccuracy, .mistake, .blunder], id: \.self) { c in
-                HStack(spacing: 3) { Circle().fill(Theme.color(for: c)).frame(width: 6, height: 6); Text(c.name) }
+                HStack(spacing: 3) { Circle().fill(Theme.color(for: c)).frame(width: 6, height: 6); Text(c.name).lineLimit(1) }
             }
         }
-        .font(.system(size: 10.5)).foregroundStyle(Theme.ink3).lineLimit(1).minimumScaleFactor(0.8)
+        .font(.system(size: 10.5)).foregroundStyle(Theme.ink3)
+    }
+
+    private func playerKey(_ side: Side, _ fallback: String) -> some View {
+        let full = PGN.meaningful(app.game.header(fallback)) ?? fallback
+        return HStack(spacing: 3) {
+            Self.marker(cls: nil, side: side)
+            Text(Self.shortName(app.game.header(fallback), fallback)).lineLimit(1).truncationMode(.tail)
+        }
+        .frame(maxWidth: 130, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .help(full)
     }
 
     /// A move marker: filled White or Black, ringed in the severity colour (grey without a class).
@@ -654,11 +760,11 @@ private struct EvalGraph: View {
                     let origin = geo[proxy.plotFrame!].origin
                     let half = min(118, geo.size.width / 2)
                     tooltip(p).frame(maxWidth: half * 2)
-                        .position(x: min(max(origin.x + x, half), geo.size.width - half), y: 24)
+                        .position(x: min(max(origin.x + x, half), geo.size.width - half), y: 32)
                 }
             }
         }
-        .frame(height: 132)
+        .frame(height: 108)
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.line2, lineWidth: 1))
         .accessibilityLabel("Evaluation graph. Click to jump to a move.")

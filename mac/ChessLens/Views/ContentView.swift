@@ -5,20 +5,34 @@ import ChessCore
 struct ContentView: View {
     @Environment(AppModel.self) private var app
     @FocusState private var focused: Bool
+    /// The side panel's width, kept across launches. Clamped on use: the window may have shrunk since.
+    @AppStorage("inspector.width") private var inspectorStored: Double = ContentView.defaultInspector
+    static let minInspector: CGFloat = 320
+    static let defaultInspector: Double = 380
+
+    private func inspectorWidth(in total: CGFloat) -> CGFloat {
+        min(max(CGFloat(inspectorStored), Self.minInspector), max(Self.minInspector, total * 0.5))
+    }
 
     var body: some View {
         @Bindable var app = app
-        HStack(spacing: 0) {
-            BoardColumn()
-                .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
-                .background(Theme.bg)
-            if app.showInspector {
-                Divider()
-                InspectorView()
-                    .frame(width: 380)
-                    .frame(maxHeight: .infinity)
-                    .transition(.move(edge: .trailing))
+        GeometryReader { geo in
+            let w = inspectorWidth(in: geo.size.width)
+            HStack(spacing: 0) {
+                BoardColumn()
+                    .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Theme.bg)
+                if app.showInspector {
+                    InspectorResizeHandle(width: $inspectorStored, range: Double(Self.minInspector)...Double(max(Self.minInspector, geo.size.width * 0.5)),
+                                          fallback: Self.defaultInspector)
+                        .zIndex(1)
+                    InspectorView()
+                        .frame(width: w)
+                        .frame(maxHeight: .infinity)
+                        .transition(.move(edge: .trailing))
+                }
             }
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .animation(.easeOut(duration: 0.2), value: app.showInspector)
             .navigationTitle(app.title)
@@ -43,7 +57,7 @@ struct ContentView: View {
             }
             .onDrop(of: [.fileURL, .image, .url, .plainText], isTargeted: $app.isDropTargeted) { providers in handleDrop(providers) }
             .overlay { if app.isDropTargeted { dropOverlay } }
-            .overlay { if app.pendingImport != nil { ImportConfirmCard(inspectorWidth: app.showInspector ? 381 : 0) } }
+            .overlay { if app.pendingImport != nil { ImportConfirmCard(inspectorWidth: app.showInspector ? inspectorShownWidth + 1 : 0) } }
             .overlay(alignment: .bottom) { toast }
             .focusable()
             .focused($focused)
@@ -53,6 +67,9 @@ struct ContentView: View {
             .onChange(of: app.showImport) { _, shown in if !shown { focused = true } }
             .onChange(of: app.ask.isOpen) { _, open in if !open { focused = true } }       // arrow keys work again
     }
+
+    /// Last width the panel was laid out at, for the import card's offset.
+    private var inspectorShownWidth: CGFloat { min(max(CGFloat(inspectorStored), Self.minInspector), 1200) }
 
     // MARK: Toolbar
 
@@ -282,5 +299,40 @@ struct LessonCaption: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: app.lessonFocus)
+    }
+}
+
+
+// MARK: - Inspector resize handle
+
+/// The divider between the board and the side panel: a hairline with a wider grab area. Drag to resize,
+/// double-click to restore the default width.
+struct InspectorResizeHandle: View {
+    @Binding var width: Double
+    let range: ClosedRange<Double>
+    let fallback: Double
+    @State private var dragStart: Double?
+    @State private var hovering = false
+
+    var body: some View {
+        Rectangle().fill(Theme.line).frame(width: 1)
+            .overlay {
+                Color.clear.frame(width: 9).contentShape(Rectangle())
+                    .onHover { inside in
+                        hovering = inside
+                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
+                    .onTapGesture(count: 2) { width = fallback }
+                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { v in
+                            let start = dragStart ?? min(max(width, range.lowerBound), range.upperBound)
+                            dragStart = start
+                            width = min(max(start - v.translation.width, range.lowerBound), range.upperBound)
+                        }
+                        .onEnded { _ in dragStart = nil })
+                    .onDisappear { if hovering { NSCursor.pop(); hovering = false } }
+            }
+            .accessibilityLabel("Resize side panel")
+            .help("Drag to resize the side panel; double-click to reset")
     }
 }
