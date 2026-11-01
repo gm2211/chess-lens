@@ -1,18 +1,12 @@
 import SwiftUI
 import ChessCore
 
-private enum MoveToken {
-    case number(String)
-    case move(node: Int, depth: Int)
-    case open(Int)
-    case close(Int)
-}
-
-/// One visual row of the move table: a numbered main-line pair, an inset block of
-/// comments and side variations hanging off the move above it, or a review note on a critical moment.
+/// One visual row of the move table, which shows a single line (root → `AppModel.lineTip`): a numbered
+/// pair, a source comment under its move, the branch chips at a fork, or a review note on a critical moment.
 private enum MoveRow {
     case pair(number: Int, white: Int?, black: Int?)
-    case block(after: Int, comment: String?, variations: [[MoveToken]])
+    case comment(after: Int, text: String)
+    case chips(LineFork)
     case annotation(Int)
 
     /// Stable across rebuilds (unlike the row's offset, which shifts when review notes are inserted),
@@ -20,7 +14,8 @@ private enum MoveRow {
     var id: String {
         switch self {
         case .pair(let n, let w, let b): "p\(n).\(w ?? -1).\(b ?? -1)"
-        case .block(let after, _, _): "b\(after)"
+        case .comment(let after, _): "b\(after)"
+        case .chips(let f): "c\(f.parent)"
         case .annotation(let id): "a\(id)"
         }
     }
@@ -50,73 +45,43 @@ private func evalChipText(_ e: Eval) -> String {
     }
 }
 
-/// Inline tokens for a side variation starting with `node` (a child of `parent`).
-private func variationTokens(_ g: Game, parent: Int, node: Int) -> [MoveToken] {
-    var out: [MoveToken] = []
-
-    func emitMove(parent: Int, node: Int, force: Bool, depth: Int) {
-        let pos = g.nodes[parent].position
-        if pos.turn == .white { out.append(.number("\(pos.fullmove).")) }
-        else if force { out.append(.number("\(pos.fullmove)\u{2026}")) }
-        out.append(.move(node: node, depth: depth))
-    }
-
-    func continuation(from start: Int, depth: Int) {
-        var cur = start
-        var force = false
-        while let first = g.nodes[cur].children.first {
-            emitMove(parent: cur, node: first, force: force, depth: depth)
-            let kids = g.nodes[cur].children
-            for alt in kids.dropFirst() {
-                out.append(.open(depth + 1))
-                emitMove(parent: cur, node: alt, force: true, depth: depth + 1)
-                continuation(from: alt, depth: depth + 1)
-                out.append(.close(depth + 1))
-            }
-            force = kids.count > 1
-            cur = first
-        }
-    }
-
-    emitMove(parent: parent, node: node, force: true, depth: 1)
-    continuation(from: node, depth: 1)
-    return out
-}
-
-/// Main-line node each critical moment's note hangs under: the moment itself, or for a moment inside a
-/// side variation, the main-line move that variation replaces.
-private func momentAnchors(_ g: Game, moments: [Int]) -> [Int: [Int]] {
-    var main = Set<Int>()
-    var cur = 0
-    while let next = g.nodes[cur].children.first { main.insert(next); cur = next }
+/// Node of the shown `line` each critical moment's note hangs under: the moment itself, or for a moment
+/// off the line, the line's move at the point where the moment's branch leaves it.
+private func momentAnchors(_ g: Game, line: [Int], moments: [Int]) -> [Int: [Int]] {
+    let index = Dictionary(uniqueKeysWithValues: line.enumerated().map { ($1, $0) })
     var out: [Int: [Int]] = [:]
     for id in moments where g.nodes.indices.contains(id) {
         var a = id
-        while !main.contains(a), let p = g.nodes[a].parent {
-            if p == 0 || main.contains(p) { a = g.nodes[p].children.first ?? a; break }
+        while index[a] == nil, let p = g.nodes[a].parent {
+            if let i = index[p] { a = line.indices.contains(i + 1) ? line[i + 1] : p; break }
             a = p
         }
-        if main.contains(a) { out[a, default: []].append(id) }
+        if index[a] != nil, a != 0 { out[a, default: []].append(id) }
     }
     return out
 }
 
-private func buildRows(_ g: Game, showSource: Bool, anchors: [Int: [Int]]) -> [MoveRow] {
+private func buildRows(_ g: Game, line: [Int], showSource: Bool, anchors: [Int: [Int]]) -> [MoveRow] {
     var rows: [MoveRow] = []
     var pending: (number: Int, white: Int?, black: Int?)?
 
-    // A pair's moment notes follow the pair, so "10. Nxb5 cxb5" stays on one line.
+    // A pair's branch chips (white's first) and moment notes follow the pair, so "10. Nxb5 cxb5" stays on one line.
     func flush() {
         if let p = pending {
             rows.append(.pair(number: p.number, white: p.white, black: p.black))
-            for id in [p.white, p.black].compactMap({ $0 }) { rows += (anchors[id] ?? []).map { .annotation($0) } }
+            let moves = [p.white, p.black].compactMap { $0 }
+            for id in moves {
+                if let parent = g.nodes[id].parent, g.nodes[parent].children.count > 1 {
+                    rows.append(.chips(LineFork(parent: parent, node: id, siblings: g.nodes[parent].children)))
+                }
+            }
+            for id in moves { rows += (anchors[id] ?? []).map { .annotation($0) } }
         }
         pending = nil
     }
 
-    if showSource, let c = displayComment(g.nodes[0].comment) { rows.append(.block(after: 0, comment: c, variations: [])) }
-    var cur = 0
-    while let next = g.nodes[cur].children.first {
+    if showSource, let c = displayComment(g.nodes[0].comment) { rows.append(.comment(after: 0, text: c)) }
+    for (cur, next) in zip(line, line.dropFirst()) {
         let pos = g.nodes[cur].position
         if pos.turn == .white {
             flush()
@@ -129,33 +94,54 @@ private func buildRows(_ g: Game, showSource: Bool, anchors: [Int: [Int]]) -> [M
             pending = (pos.fullmove, nil, next)
             flush()
         }
-        let comment = showSource ? displayComment(g.nodes[next].comment) : nil
-        let alts = g.nodes[cur].children.dropFirst().map { variationTokens(g, parent: cur, node: $0) }
-        if comment != nil || !alts.isEmpty {
+        if showSource, let comment = displayComment(g.nodes[next].comment) {
             flush()
-            rows.append(.block(after: next, comment: comment, variations: alts))
+            rows.append(.comment(after: next, text: comment))
         }
-        cur = next
     }
     flush()
     return rows
 }
 
-/// The annotated game: review summary and eval graph on top (after a review), then the move table with
-/// critical-moment notes under their moves, the result, and the lesson's exercises.
+/// "12. Nf3" / "12… Nf6" for the move leading to `id`.
+private func numberedSAN(_ g: Game, _ id: Int) -> String {
+    let n = g.nodes[id]
+    guard let p = n.parent else { return n.san }
+    let pos = g.nodes[p].position
+    return pos.turn == .white ? "\(pos.fullmove). \(n.san)" : "\(pos.fullmove)\u{2026} \(n.san)"
+}
+
+/// The first few moves of the branch starting at `id`, for a chip's tooltip.
+private func branchPreview(_ g: Game, from id: Int, plies: Int = 8) -> String {
+    let ids = Array(g.mainline(from: id).prefix(plies))
+    var parts: [String] = []
+    for (i, n) in ids.enumerated() {
+        let p = g.nodes[n].parent.map { g.nodes[$0].position }
+        if i == 0 || p?.turn == .white { parts.append(numberedSAN(g, n)) } else { parts.append(g.nodes[n].san) }
+    }
+    let more = g.mainline(from: id).count > plies ? " \u{2026}" : ""
+    return parts.joined(separator: " ") + more
+}
+
+/// The annotated game: review summary and eval graph on top (after a review), then the move table for the
+/// shown line with branch chips at every fork, critical-moment notes under their moves, the result (on the
+/// game's own line) or a way back to it, and the lesson's exercises.
 ///
 /// A plain VStack, not a LazyVStack: the review summary is a tall first child, so a lazy stack's size
 /// estimate for the unrealized rows swung by thousands of points as rows came and went, and every
 /// scroll to the current move re-measured and jumped (the sidebar flickered on each click). A game's
 /// table is at most a few hundred light rows, so laying it all out is cheap and gives exact geometry.
-/// The body doesn't read `currentID` (see `FollowCurrentMove`), so moving doesn't rebuild the rows.
+/// The body doesn't read `currentID` (see `FollowCurrentMove`), so moving doesn't rebuild the rows; it reads
+/// `lineTip`, which changes only when the user switches to another line.
 struct MoveListView: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
         let reviewed = app.review.hasResults && !app.hidesEvaluation
-        let anchors = reviewed ? momentAnchors(app.game, moments: app.review.criticalMoments()) : [:]
-        let rows = buildRows(app.game, showSource: app.showSourceAnalysis, anchors: anchors)
+        let line = app.displayLine
+        let anchors = reviewed ? momentAnchors(app.game, line: line, moments: app.review.criticalMoments()) : [:]
+        let rows = buildRows(app.game, line: line, showSource: app.showSourceAnalysis, anchors: anchors)
+        let offMain = app.isOffMainline
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -164,7 +150,15 @@ struct MoveListView: View {
                         Divider().padding(.bottom, 6)
                     }
                     ForEach(rows, id: \.id) { row in rowView(row) }
-                    if app.game.result != "*" {
+                    if offMain {
+                        Button { app.backToGameLine() } label: {
+                            Label("Back to game line", systemImage: "arrow.uturn.backward")
+                        }
+                        .buttonStyle(QuietButtonStyle())
+                        .help("Return to where this line left the game and show the game's moves again")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                    } else if app.game.result != "*" {
                         Text(app.game.result)
                             .font(.mono(13)).foregroundStyle(Theme.ink3)
                             .frame(maxWidth: .infinity)
@@ -201,22 +195,20 @@ struct MoveListView: View {
             }
             .padding(.horizontal, 8).padding(.vertical, 1)
             .background(number % 2 == 0 ? Theme.surface2.opacity(0.45) : .clear)
-        case .block(_, let comment, let variations):
-            VStack(alignment: .leading, spacing: 4) {
-                if let comment {
-                    Text(comment).font(.system(size: 12.5).italic()).foregroundStyle(Theme.ink2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                ForEach(Array(variations.enumerated()), id: \.offset) { _, tokens in
-                    FlowLayout(spacing: 1, lineSpacing: 2) {
-                        ForEach(Array(tokens.enumerated()), id: \.offset) { _, t in tokenView(t) }
-                    }
+        case .comment(_, let text):
+            Text(text).font(.system(size: 12.5).italic()).foregroundStyle(Theme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 6).padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .leading) { Rectangle().fill(Theme.line2).frame(width: 2) }
+                .padding(.leading, 44).padding(.trailing, 12).padding(.vertical, 4)
+        case .chips(let fork):
+            FlowLayout(spacing: 5, lineSpacing: 5) {
+                ForEach(fork.siblings, id: \.self) { sib in
+                    BranchChip(id: sib, selected: sib == fork.node)
                 }
             }
-            .padding(.vertical, 6).padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .leading) { Rectangle().fill(Theme.line2).frame(width: 2) }
-            .padding(.leading, 44).padding(.trailing, 12).padding(.vertical, 4)
+            .padding(.leading, 52).padding(.trailing, 12).padding(.top, 3).padding(.bottom, 6)
         case .annotation(let id):
             MomentAnnotation(id: id)
         }
@@ -225,24 +217,53 @@ struct MoveListView: View {
     @ViewBuilder
     private func cell(_ id: Int?) -> some View {
         Group {
-            if let id { MoveButton(id: id, depth: 0, fill: true).id("mv\(id)") }
+            if let id { MoveButton(id: id).id("mv\(id)") }
             else { Text("\u{2026}").font(.mono(14)).foregroundStyle(Theme.ink3).padding(.horizontal, 8) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    @ViewBuilder
-    private func tokenView(_ t: MoveToken) -> some View {
-        switch t {
-        case .number(let s):
-            Text(s).font(.mono(12, weight: .regular)).foregroundStyle(Theme.ink3).padding(.leading, 3)
-        case .move(let id, let depth):
-            MoveButton(id: id, depth: depth, fill: false).id("mv\(id)")
-        case .open:
-            Text("(").font(.mono(12.5)).foregroundStyle(Theme.ink3).padding(.leading, 3)
-        case .close:
-            Text(")").font(.mono(12.5)).foregroundStyle(Theme.ink3).padding(.trailing, 2)
+/// One alternative at a fork: "19. Qb7". The one on the shown line is selected; the game's own move is tagged
+/// "game". Clicking switches the shown line to that branch.
+private struct BranchChip: View {
+    @Environment(AppModel.self) private var app
+    let id: Int
+    let selected: Bool
+    @State private var hover = false
+
+    var body: some View {
+        if app.game.nodes.indices.contains(id) { content } else { EmptyView() }
+    }
+
+    @ViewBuilder private var content: some View {
+        let g = app.game
+        let isGame = g.isOnMainline(id)
+        let isFirst = g.nodes[id].parent.map { g.nodes[$0].children.first == id } ?? true
+        Button { app.goto(id) } label: {
+            HStack(spacing: 5) {
+                Text(numberedSAN(g, id)).font(.mono(12, weight: .medium))
+                if isGame {
+                    Text("game").font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(selected ? Theme.accent.opacity(0.85) : Theme.ink3)
+                }
+                if selected { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
+            }
+            .foregroundStyle(selected ? Theme.accent : Theme.ink2)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(selected ? Theme.accentSoft : (hover ? Theme.surface2 : Theme.surface),
+                        in: RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(selected ? Theme.accent.opacity(0.6) : Theme.line2, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 5))
         }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help(branchPreview(g, from: id))
+        .contextMenu {
+            if !isFirst { Button("Make Main Line") { app.promote(id) } }
+            Button("Delete Branch", role: .destructive) { app.deleteFrom(id) }
+        }
+        .accessibilityLabel("\(numberedSAN(g, id))\(isGame ? ", game move" : "")\(selected ? ", shown" : "")")
     }
 }
 
@@ -264,8 +285,6 @@ private struct FollowCurrentMove: View {
 private struct MoveButton: View {
     @Environment(AppModel.self) private var app
     let id: Int
-    let depth: Int
-    let fill: Bool
     @State private var hover = false
 
     var body: some View {
@@ -290,10 +309,10 @@ private struct MoveButton: View {
                         .foregroundStyle(current ? Theme.accentInk.opacity(0.75) : Theme.ink3).padding(.leading, 6)
                 }
             }
-            .font(.mono(depth > 0 ? 12.5 : 14, weight: .medium))
-            .foregroundStyle(current ? Theme.accentInk : (depth > 0 ? Theme.ink2 : Theme.ink))
-            .padding(.horizontal, fill ? 8 : 4).padding(.vertical, fill ? 4 : 1)
-            .frame(maxWidth: fill ? .infinity : nil, alignment: .leading)
+            .font(.mono(14, weight: .medium))
+            .foregroundStyle(current ? Theme.accentInk : Theme.ink)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(current ? Theme.accent : (hover ? Theme.surface2 : .clear), in: RoundedRectangle(cornerRadius: 4))
             .contentShape(Rectangle())
         }
