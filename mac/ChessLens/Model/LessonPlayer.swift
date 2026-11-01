@@ -51,7 +51,8 @@ final class LessonPlayer {
     /// Replays the game moves between two steps, one slide at a time (see `show`).
     @ObservationIgnored private var travelTask: Task<Void, Never>?
     static let secondsPerHop = 0.35
-    @ObservationIgnored private let narrator = Narrator()
+    /// Kokoro or the system voice, per Settings > Voice (see Narration/).
+    @ObservationIgnored private let narrator: any Narrator = VoiceNarrator()
     /// The node the player put on the board; any other navigation closes the player (see `AppModel.currentID`).
     @ObservationIgnored private(set) var nodeID: Int
 
@@ -168,6 +169,8 @@ final class LessonPlayer {
         if linePly > 0 { linePly = 0; stepEpoch += 1 }
         let step = current.step
         let narrate = narrate
+        // Synthesize this step's narration while the pieces travel, and the next step's while this one plays.
+        if narrate { narrator.prepare([step.say] + (canGoForward ? [steps[index + 1].step.say] : [])) }
         task = Task { [weak self] in
             guard let self else { return }
             await self.travelTask?.value
@@ -205,76 +208,5 @@ final class LessonPlayer {
     static func readingTime(_ text: String) -> Double {
         let words = text.split(whereSeparator: \.isWhitespace).count
         return max(2.5, Double(words) / 3.0 + 0.6)
-    }
-}
-
-/// Speaks with the system voice and returns when the utterance ends (or is stopped / the task cancelled).
-@MainActor
-private final class Narrator: NSObject, AVSpeechSynthesizerDelegate {
-    private let synth = AVSpeechSynthesizer()
-    private var waiting: CheckedContinuation<Void, Never>?
-
-    override init() {
-        super.init()
-        synth.delegate = self
-    }
-
-    func speak(_ text: String) async {
-        stop()
-        let u = AVSpeechUtterance(string: Self.spoken(text))
-        u.voice = AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
-        u.rate = AVSpeechUtteranceDefaultSpeechRate
-        u.postUtteranceDelay = 0.1
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { c in
-                waiting = c
-                synth.speak(u)
-            }
-        } onCancel: {
-            Task { @MainActor [weak self] in self?.stop() }
-        }
-    }
-
-    func stop() {
-        if synth.isSpeaking { synth.stopSpeaking(at: .immediate) }
-        resume()
-    }
-
-    private func resume() {
-        let c = waiting; waiting = nil
-        c?.resume()
-    }
-
-    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) {
-        Task { @MainActor [weak self] in self?.resume() }
-    }
-
-    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel u: AVSpeechUtterance) {
-        Task { @MainActor [weak self] in self?.resume() }
-    }
-
-    /// Notation read the way a coach would say it: "6...Nf6" becomes "6, knight f6".
-    static func spoken(_ text: String) -> String {
-        var s = text.replacingOccurrences(of: "\u{2026}", with: "...")
-        s = s.replacingOccurrences(of: "O-O-O", with: "castles long").replacingOccurrences(of: "O-O", with: "castles")
-        let pieces: [Character: String] = ["K": "king", "Q": "queen", "R": "rook", "B": "bishop", "N": "knight"]
-        let rx = try! NSRegularExpression(pattern: #"\b(\d{1,3})(\.\.\.|\.)\s?([KQRBN])?([a-h]?[1-8]?)(x)?([a-h][1-8])(=[QRBN])?([+#])?"#)
-        let ns = s as NSString
-        var out = "", last = 0
-        for m in rx.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
-            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
-            func g(_ i: Int) -> String? { m.range(at: i).location == NSNotFound ? nil : ns.substring(with: m.range(at: i)) }
-            var words = [g(1)! + ","]
-            if let p = g(3)?.first { words.append(pieces[p] ?? "") }
-            if let d = g(4), !d.isEmpty { words.append(d) }
-            if g(5) != nil { words.append("takes") }
-            words.append(g(6)!)
-            if let promo = g(7)?.last { words.append("promotes to " + (pieces[promo] ?? "queen")) }
-            if let c = g(8) { words.append(c == "#" ? "mate" : "check") }
-            out += words.joined(separator: " ")
-            last = m.range.location + m.range.length
-        }
-        out += ns.substring(from: last)
-        return out
     }
 }
